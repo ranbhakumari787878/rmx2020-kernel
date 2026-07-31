@@ -9435,6 +9435,8 @@ static int priv_driver_set_wow(IN struct net_device *prNetDev,
 	DBGLOG(REQ, LOUD, "argc is %i\n", i4Argc);
 
 	u4Ret = kalkStrtou32(apcArgv[1], 0, &Enable);
+	DBGLOG(INIT, ERROR, "WOW_START requested Enable=%d, forcing OFF\n", Enable);
+	Enable = 0; /* force WOW disabled - custom patch */
 
 	if (u4Ret)
 		DBGLOG(REQ, LOUD, "parse bEnable error u4Ret=%d\n", u4Ret);

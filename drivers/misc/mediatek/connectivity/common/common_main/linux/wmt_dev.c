@@ -245,7 +245,7 @@ static INT32 wmt_fb_notifier_callback(struct notifier_block *self, ULONG event, 
 		atomic_set(&g_es_lr_flag_for_lpbk_onoff, 0);
 		atomic_set(&g_es_lr_flag_for_blank, 0);
 		WMT_WARN_FUNC("@@@@@@@@@@wmt enter early POWERDOWN @@@@@@@@@@@@@@\n");
-		schedule_work(&gPwrOnOffWork);
+		/* schedule_work(&gPwrOnOffWork); */ /* keep WiFi alive during screen off */
 		break;
 	default:
 		break;
