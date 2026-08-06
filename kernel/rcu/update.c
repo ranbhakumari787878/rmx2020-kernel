@@ -661,7 +661,9 @@ late_initcall(rcu_verify_early_boot_tests);
 void rcu_early_boot_tests(void) {}
 #endif /* CONFIG_PROVE_RCU */
 
+#ifdef CONFIG_TASKS_RCU
 #include "tasks.h"
+#endif
 
 #ifndef CONFIG_TINY_RCU
 
@@ -680,7 +682,9 @@ void __init rcupdate_announce_bootup_oddness(void)
 		pr_info("\tRCU CPU stall warnings suppressed (rcu_cpu_stall_suppress).\n");
 	if (rcu_cpu_stall_timeout != CONFIG_RCU_CPU_STALL_TIMEOUT)
 		pr_info("\tRCU CPU stall warnings timeout set to %d (rcu_cpu_stall_timeout).\n", rcu_cpu_stall_timeout);
+#ifdef CONFIG_TASKS_RCU
 	rcu_tasks_bootup_oddness();
+#endif
 }
 
 #endif /* #ifndef CONFIG_TINY_RCU */

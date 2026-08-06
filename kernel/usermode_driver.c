@@ -8,6 +8,7 @@
 #include <linux/fs_struct.h>
 #include <linux/task_work.h>
 #include <linux/usermode_driver.h>
+#include <linux/sched/signal.h>
 
 static LIST_HEAD(umh_list);
 static DEFINE_MUTEX(umh_list_lock);

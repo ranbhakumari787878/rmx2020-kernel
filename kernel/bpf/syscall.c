@@ -1753,9 +1753,11 @@ static void __bpf_prog_put_noref(struct bpf_prog *prog, bool deferred)
 	bpf_prog_free_linfo(prog);
 
 	if (deferred) {
+#ifdef CONFIG_TASKS_TRACE_RCU
 		if (prog->aux->sleepable)
 			call_rcu_tasks_trace(&prog->aux->rcu, __bpf_prog_put_rcu);
 		else
+#endif
 			call_rcu(&prog->aux->rcu, __bpf_prog_put_rcu);
 	} else {
 		__bpf_prog_put_rcu(&prog->aux->rcu);

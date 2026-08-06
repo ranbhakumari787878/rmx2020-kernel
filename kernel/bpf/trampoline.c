@@ -217,7 +217,15 @@ static int bpf_trampoline_update(struct bpf_trampoline *tr)
 	 * programs finish executing.
 	 * Wait for these two grace periods together.
 	 */
+#ifdef CONFIG_TASKS_TRACE_RCU
+#ifdef CONFIG_TASKS_TRACE_RCU
 	synchronize_rcu_mult(call_rcu_tasks, call_rcu_tasks_trace);
+#else
+	synchronize_rcu_tasks();
+#endif
+#else
+	synchronize_rcu_tasks();
+#endif
 
 	err = arch_prepare_bpf_trampoline(new_image, new_image + PAGE_SIZE / 2,
 					  &tr->func.model, flags, tprogs,
@@ -426,6 +434,7 @@ void notrace __bpf_prog_exit(struct bpf_prog *prog, u64 start)
 	rcu_read_unlock();
 }
 
+#ifdef CONFIG_TASKS_TRACE_RCU
 void notrace __bpf_prog_enter_sleepable(void)
 {
 	rcu_read_lock_trace();
@@ -436,6 +445,10 @@ void notrace __bpf_prog_exit_sleepable(void)
 {
 	rcu_read_unlock_trace();
 }
+#else
+void notrace __bpf_prog_enter_sleepable(void) {}
+void notrace __bpf_prog_exit_sleepable(void) {}
+#endif
 
 int __weak
 arch_prepare_bpf_trampoline(void *image, void *image_end,

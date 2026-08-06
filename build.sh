@@ -13,7 +13,9 @@ export KBUILD_BUILD_USER="sarthakroy2002"
 #    mkdir clang && tar -xf aosp-clang.tar.gz -C clang && rm -rf aosp-clang.tar.gz
 #fi
 
-#[ -d "out" ] && rm -rf out || mkdir -p out
+#[ -d "out" ] && rm -rf out || 
+
+mkdir -p out
 
 make O=out ARCH=arm64 RMX2020_defconfig
 
