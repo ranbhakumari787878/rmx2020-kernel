@@ -8,9 +8,7 @@ zipping() {
     fi
 
     rm -rf AnyKernel
-    unzip -q anykernel-template.zip -d .
-    mv anykernel-template AnyKernel
-
+    git clone --depth=1 https://github.com/sarthakroy2002/AnyKernel3.git AnyKernel || return 1
     cp "$IMAGE" AnyKernel || return 1
     (
         cd AnyKernel || exit 1

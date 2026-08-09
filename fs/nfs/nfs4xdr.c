@@ -1121,7 +1121,8 @@ static void encode_attrs(struct xdr_stream *xdr, const struct iattr *iap,
 		if (iap->ia_valid & ATTR_ATIME_SET) {
 			*p++ = cpu_to_be32(NFS4_SET_TO_CLIENT_TIME);
 			ts = timespec64_to_timespec(iap->ia_atime);
-			p = xdr_encode_nfstime4(p, &ts);
+   *p++ = cpu_to_be32((u32)ts.tv_sec);
+   *p++ = cpu_to_be32(ts.tv_nsec);
 		} else
 			*p++ = cpu_to_be32(NFS4_SET_TO_SERVER_TIME);
 	}
@@ -1129,7 +1130,8 @@ static void encode_attrs(struct xdr_stream *xdr, const struct iattr *iap,
 		if (iap->ia_valid & ATTR_MTIME_SET) {
 			*p++ = cpu_to_be32(NFS4_SET_TO_CLIENT_TIME);
 			ts = timespec64_to_timespec(iap->ia_mtime);
-			p = xdr_encode_nfstime4(p, &ts);
+   *p++ = cpu_to_be32((u32)ts.tv_sec);
+   *p++ = cpu_to_be32(ts.tv_nsec);
 		} else
 			*p++ = cpu_to_be32(NFS4_SET_TO_SERVER_TIME);
 	}
