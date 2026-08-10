@@ -17,6 +17,7 @@
 #include <linux/slab.h>
 #include <trace/events/power.h>
 #include <trace/events/sched.h>
+#include <mt-plat/mtk_cpufreq_common_api.h>
 
 #include "sched.h"
 #include "tune.h"
@@ -976,7 +977,7 @@ static unsigned int freq2util(struct sugov_policy *sg_policy, unsigned int freq)
 #endif
 	for (idx = 0; idx < sg_policy->len; idx++) {
 		capacity = get_opp_capacity(sg_policy->policy, idx);
-		opp_freq = mt_cpufreq_get_cpu_freq(sg_policy->policy->cpu, idx);
+		opp_freq = sg_policy->policy->freq_table[idx].frequency;
 		if (freq <= opp_freq)
 			return capacity;
 	}
@@ -1387,3 +1388,4 @@ static int __init sugov_register(void)
 	return cpufreq_register_governor(&schedutil_gov);
 }
 fs_initcall(sugov_register);
+#include "cpufreq_schedutil_plus.c"

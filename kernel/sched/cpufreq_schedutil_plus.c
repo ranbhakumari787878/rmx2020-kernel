@@ -14,7 +14,7 @@ void set_capacity_margin_dvfs_changed(bool changed)
 }
 #endif
 
-static unsigned int get_next_freq(struct sugov_policy *sg_policy,
+static unsigned int get_next_freq_plus(struct sugov_policy *sg_policy,
 				  unsigned long util, unsigned long max)
 {
 	struct cpufreq_policy *policy = sg_policy->policy;
@@ -59,7 +59,7 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 #endif
 	}
 
-	freq = mt_cpufreq_get_cpu_freq(cpu, target_idx);
+	freq = sg_policy->policy->freq_table[target_idx].frequency;
 
 	sg_policy->cached_raw_freq = freq;
 	return cpufreq_driver_resolve_freq(policy, freq);
