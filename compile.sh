@@ -14,7 +14,7 @@ export KBUILD_BUILD_USER="bhaskarkumar787878"
 #[ -d "out" ] && rm -rf out || mkdir -p out
 #make O=out ARCH=arm64 RMX2020_defconfig
 PATH="${PWD}/clang/bin:${PATH}" \
-make -j$(nproc --all) O=out CC="ccache clang" LLVM=1 CONFIG_NO_ERROR_ON_MISMATCH=y 2>&1 | tee build.log
+make -j$(nproc --all) O=out CC="clang" LLVM=1 CONFIG_NO_ERROR_ON_MISMATCH=y 2>&1 | tee build.log
 }
 zipping() {
     IMAGE="out/arch/arm64/boot/Image.gz-dtb"
