@@ -17,7 +17,7 @@ zipping() {
     )
 }
 zipping
-
+rm releasess/*zip
 rm build.log
 cp AnyKernel/UBUNTU*.zip releasess/
 rm -rf AnyKernel/
