@@ -1487,7 +1487,8 @@ static void android_work(struct work_struct *data)
 	unsigned long flags;
 	bool uevent_sent = false;
 
-	if (!android_device)
+	/* android_device may be NULL or an ERR_PTR if creation failed/was dropped */
+	if (IS_ERR_OR_NULL(android_device))
 		return;
 
 	spin_lock_irqsave(&cdev->lock, flags);
@@ -1778,7 +1779,7 @@ static void do_usb_state_monitor_work(struct work_struct *work)
 	unsigned long flags;
 
 	/* gadget removed (rmdir): nothing to monitor, do not re-arm */
-	if (!android_device)
+	if (IS_ERR_OR_NULL(android_device))
 		return;
 	gi = dev_get_drvdata(android_device);
 	if (!gi)
@@ -1872,30 +1873,53 @@ static int android_device_create(struct gadget_info *gi)
 {
 	struct device_attribute **attrs;
 	struct device_attribute *attr;
+	struct device *dev;
+	char *serial;
+	int err;
 
 	INIT_WORK(&gi->work, android_work);
-	android_device = device_create(android_class, NULL,
-				MKDEV(0, 0), NULL, "android0");
-	if (IS_ERR(android_device))
-		return PTR_ERR(android_device);
 
-	serial_string = kzalloc(sizeof(char)*MAX_USB_STRING_WITH_NULL_LEN,
-			GFP_KERNEL);
-	serial_string[0] = '\0';
+	/*
+	 * Only one android0 device can exist. If another gadget (e.g. the
+	 * system g1) already owns it, a second gadget (USB HID apps create
+	 * their own) must not touch it: do not create a duplicate and, above
+	 * all, never overwrite the global with an error pointer.
+	 */
+	if (!IS_ERR_OR_NULL(android_device)) {
+		pr_info("%s: android0 already exists, gadget %s shares it\n",
+			__func__, gi->composite.name);
+		return 0;
+	}
 
-	dev_set_drvdata(android_device, gi);
+	dev = device_create(android_class, NULL, MKDEV(0, 0), NULL,
+			    "android0");
+	if (IS_ERR(dev))
+		return PTR_ERR(dev);
+
+	serial = kzalloc(sizeof(char) * MAX_USB_STRING_WITH_NULL_LEN,
+			 GFP_KERNEL);
+	if (!serial) {
+		device_destroy(dev->class, dev->devt);
+		return -ENOMEM;
+	}
+	serial[0] = '\0';
+	serial_string = serial;
+
+	dev_set_drvdata(dev, gi);
 
 	attrs = android_usb_attributes;
 	while ((attr = *attrs++)) {
-		int err;
-
-		err = device_create_file(android_device, attr);
+		err = device_create_file(dev, attr);
 		if (err) {
-			device_destroy(android_device->class,
-				       android_device->devt);
+			device_destroy(dev->class, dev->devt);
+			serial_string = NULL;
+			kfree(serial);
 			return err;
 		}
 	}
+
+	/* publish only a fully set up device */
+	android_device = dev;
 
 #if defined(CONFIG_MTK_USB2JTAG_SUPPORT)
 	if (usb2jtag_mode())
@@ -1910,12 +1934,18 @@ static int android_device_create(struct gadget_info *gi)
 	return 0;
 }
 
-static void android_device_destroy(void)
+static void android_device_destroy(struct gadget_info *gi)
 {
 	struct device_attribute **attrs;
 	struct device_attribute *attr;
+	struct device *dev = android_device;
 
-	if (!android_device)
+	/* nothing created, creation failed, or already destroyed */
+	if (IS_ERR_OR_NULL(dev))
+		return;
+
+	/* only the gadget that created android0 may destroy it */
+	if (dev_get_drvdata(dev) != gi)
 		return;
 
 	/*
@@ -1923,13 +1953,13 @@ static void android_device_destroy(void)
 	 * its gadget_info. Stop it before they go away, otherwise it runs on
 	 * freed memory after the gadget is removed and re-created.
 	 */
+	android_device = NULL;
 	cancel_delayed_work_sync(&usb_state_monitor_dw);
 
 	attrs = android_usb_attributes;
 	while ((attr = *attrs++))
-		device_remove_file(android_device, attr);
-	device_destroy(android_device->class, android_device->devt);
-	android_device = NULL;
+		device_remove_file(dev, attr);
+	device_destroy(dev->class, dev->devt);
 
 	kfree(serial_string);
 	serial_string = NULL;
@@ -1940,7 +1970,7 @@ static inline int android_device_create(struct gadget_info *gi)
 	return 0;
 }
 
-static inline void android_device_destroy(void)
+static inline void android_device_destroy(struct gadget_info *gi)
 {
 }
 #endif
@@ -1950,6 +1980,7 @@ static struct config_group *gadgets_make(
 		const char *name)
 {
 	struct gadget_info *gi;
+	int ret = -ENOMEM;
 
 	pr_info("%s name=%s\n", __func__, name);
 
@@ -2000,14 +2031,18 @@ static struct config_group *gadgets_make(
 	if (!gi->composite.gadget_driver.function)
 		goto err;
 
-	if (!acm_shortcut() && android_device_create(gi) < 0)
-		goto err;
+	if (!acm_shortcut()) {
+		ret = android_device_create(gi);
+		if (ret < 0)
+			goto err;
+	}
 
 	return &gi->group;
 
 err:
+	kfree(gi->composite.gadget_driver.function);
 	kfree(gi);
-	return ERR_PTR(-ENOMEM);
+	return ERR_PTR(ret);
 }
 
 static void gadgets_drop(struct config_group *group, struct config_item *item)
@@ -2016,7 +2051,7 @@ static void gadgets_drop(struct config_group *group, struct config_item *item)
 	/* gi->work and the monitor work must not outlive gi */
 	cancel_work_sync(&to_gadget_info(item)->work);
 #endif
-	android_device_destroy();
+	android_device_destroy(to_gadget_info(item));
 	config_item_put(item);
 }
 
