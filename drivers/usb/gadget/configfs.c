@@ -1487,6 +1487,9 @@ static void android_work(struct work_struct *data)
 	unsigned long flags;
 	bool uevent_sent = false;
 
+	if (!android_device)
+		return;
+
 	spin_lock_irqsave(&cdev->lock, flags);
 	if (cdev->config)
 		status[1] = true;
@@ -1769,10 +1772,18 @@ static const struct usb_gadget_driver configfs_driver_template = {
 static struct delayed_work usb_state_monitor_dw;
 static void do_usb_state_monitor_work(struct work_struct *work)
 {
-	struct gadget_info *gi = dev_get_drvdata(android_device);
-	struct usb_composite_dev *cdev = &gi->cdev;
+	struct gadget_info *gi;
+	struct usb_composite_dev *cdev;
 	char *usb_state = "NO-DEV";
 	unsigned long flags;
+
+	/* gadget removed (rmdir): nothing to monitor, do not re-arm */
+	if (!android_device)
+		return;
+	gi = dev_get_drvdata(android_device);
+	if (!gi)
+		return;
+	cdev = &gi->cdev;
 
 	spin_lock_irqsave(&cdev->lock, flags);
 	if (cdev->config)
@@ -1904,12 +1915,24 @@ static void android_device_destroy(void)
 	struct device_attribute **attrs;
 	struct device_attribute *attr;
 
+	if (!android_device)
+		return;
+
+	/*
+	 * The monitor work re-arms itself and dereferences android_device and
+	 * its gadget_info. Stop it before they go away, otherwise it runs on
+	 * freed memory after the gadget is removed and re-created.
+	 */
+	cancel_delayed_work_sync(&usb_state_monitor_dw);
+
 	attrs = android_usb_attributes;
 	while ((attr = *attrs++))
 		device_remove_file(android_device, attr);
 	device_destroy(android_device->class, android_device->devt);
+	android_device = NULL;
 
 	kfree(serial_string);
+	serial_string = NULL;
 }
 #else
 static inline int android_device_create(struct gadget_info *gi)
@@ -1989,8 +2012,12 @@ err:
 
 static void gadgets_drop(struct config_group *group, struct config_item *item)
 {
-	config_item_put(item);
+#ifdef CONFIG_USB_CONFIGFS_UEVENT
+	/* gi->work and the monitor work must not outlive gi */
+	cancel_work_sync(&to_gadget_info(item)->work);
+#endif
 	android_device_destroy();
+	config_item_put(item);
 }
 
 static struct configfs_group_operations gadgets_ops = {

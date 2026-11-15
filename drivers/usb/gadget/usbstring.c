@@ -63,7 +63,7 @@ usb_gadget_get_string (struct usb_gadget_strings *table, int id, u8 *buf)
 		return -EINVAL;
 
 #ifdef CONFIG_USB_CONFIGFS_UEVENT
-	if ((id == serial_idx) && (serial_string[0] != '\0')) {
+	if ((id == serial_idx) && serial_string && (serial_string[0] != '\0')) {
 		len = min_t(size_t, USB_MAX_STRING_LEN, strlen(serial_string));
 		len = utf8s_to_utf16s(serial_string, len, UTF16_LITTLE_ENDIAN,
 				(wchar_t *) &buf[2], USB_MAX_STRING_LEN);
