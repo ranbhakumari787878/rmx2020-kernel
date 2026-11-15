@@ -7286,7 +7286,7 @@ static int sctp_listen_start(struct sock *sk, int backlog)
 	sk->sk_state = SCTP_SS_LISTENING;
 	if (!ep->base.bind_addr.port) {
 		if (sctp_autobind(sk)) {
-			inet_sk_set_state(sk, SCTP_SS_CLOSED);
+			sk->sk_state = SCTP_SS_CLOSED;
 			return -EAGAIN;
 		}
 	} else {
