@@ -1,4 +1,5 @@
 #!/bin/bash
+rm -rf AnyKernel/
 zipping() {
     IMAGE="out/arch/arm64/boot/Image.gz-dtb"
     if [[ ! -f "$IMAGE" ]]; then
@@ -16,3 +17,7 @@ zipping() {
     )
 }
 zipping
+
+rm build.log
+cp AnyKernel/UBUNTU*.zip releases/
+rm -rf AnyKernel/
