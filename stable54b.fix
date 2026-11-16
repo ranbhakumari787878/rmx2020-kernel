@@ -1,0 +1,5082 @@
+From 6f28b59802d39c815fd24aa527f0fe5f886089df Mon Sep 17 00:00:00 2001
+From: Chen Ni <nichen@iscas.ac.cn>
+Date: Wed, 3 Jan 2024 03:35:34 +0000
+Subject: [PATCH 01/70] asix: Add check for usbnet_get_endpoints
+
+[ Upstream commit eaac6a2d26b65511e164772bec6918fcbc61938e ]
+
+Add check for usbnet_get_endpoints() and return the error if it fails
+in order to transfer the error.
+
+Fixes: 16626b0cc3d5 ("asix: Add a new driver for the AX88172A")
+Signed-off-by: Chen Ni <nichen@iscas.ac.cn>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/net/usb/ax88172a.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/usb/ax88172a.c b/drivers/net/usb/ax88172a.c
+index 909755ef71ac..5881620e4436 100644
+--- a/drivers/net/usb/ax88172a.c
++++ b/drivers/net/usb/ax88172a.c
+@@ -198,7 +198,9 @@ static int ax88172a_bind(struct usbnet *dev, struct usb_interface *intf)
+ 	u8 buf[ETH_ALEN];
+ 	struct ax88172a_private *priv;
+ 
+-	usbnet_get_endpoints(dev, intf);
++	ret = usbnet_get_endpoints(dev, intf);
++	if (ret)
++		return ret;
+ 
+ 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+ 	if (!priv)
+-- 
+2.43.0
+
+
+From d31b52876039a2e230ee8342ba915b2212c5ee80 Mon Sep 17 00:00:00 2001
+From: Sergey Shtylyov <s.shtylyov@omp.ru>
+Date: Sun, 5 Nov 2023 23:29:36 +0300
+Subject: [PATCH 02/70] pstore: ram_core: fix possible overflow in
+ persistent_ram_init_ecc()
+
+[ Upstream commit 86222a8fc16ec517de8da2604d904c9df3a08e5d ]
+
+In persistent_ram_init_ecc(), on 64-bit arches DIV_ROUND_UP() will return
+64-bit value since persistent_ram_zone::buffer_size has type size_t which
+is derived from the 64-bit *unsigned long*, while the ecc_blocks variable
+this value gets assigned to has (always 32-bit) *int* type.  Even if that
+value fits into *int* type, an overflow is still possible when calculating
+the size_t typed ecc_total variable further below since there's no cast to
+any 64-bit type before multiplication.  Declaring the ecc_blocks variable
+as *size_t* should fix this mess...
+
+Found by Linux Verification Center (linuxtesting.org) with the SVACE static
+analysis tool.
+
+Fixes: 9cc05ad97c57 ("staging: android: persistent_ram: refactor ecc support")
+Signed-off-by: Sergey Shtylyov <s.shtylyov@omp.ru>
+Link: https://lore.kernel.org/r/20231105202936.25694-1-s.shtylyov@omp.ru
+Signed-off-by: Kees Cook <keescook@chromium.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ fs/pstore/ram_core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/fs/pstore/ram_core.c b/fs/pstore/ram_core.c
+index 8ed41450cbf2..273b4098396d 100644
+--- a/fs/pstore/ram_core.c
++++ b/fs/pstore/ram_core.c
+@@ -197,7 +197,7 @@ static int persistent_ram_init_ecc(struct persistent_ram_zone *prz,
+ {
+ 	int numerr;
+ 	struct persistent_ram_buffer *buffer = prz->buffer;
+-	int ecc_blocks;
++	size_t ecc_blocks;
+ 	size_t ecc_total;
+ 
+ 	if (!ecc_info || !ecc_info->ecc_size)
+-- 
+2.43.0
+
+
+From 06c82ed988e75cf1933aee6fe259b2f9257c6bcd Mon Sep 17 00:00:00 2001
+From: Florian Lehner <dev@der-flo.net>
+Date: Sun, 5 Nov 2023 09:58:01 +0100
+Subject: [PATCH 03/70] bpf, lpm: Fix check prefixlen before walking trie
+
+[ Upstream commit 9b75dbeb36fcd9fc7ed51d370310d0518a387769 ]
+
+When looking up an element in LPM trie, the condition 'matchlen ==
+trie->max_prefixlen' will never return true, if key->prefixlen is larger
+than trie->max_prefixlen. Consequently all elements in the LPM trie will
+be visited and no element is returned in the end.
+
+To resolve this, check key->prefixlen first before walking the LPM trie.
+
+Fixes: b95a5c4db09b ("bpf: add a longest prefix match trie map implementation")
+Signed-off-by: Florian Lehner <dev@der-flo.net>
+Signed-off-by: Andrii Nakryiko <andrii@kernel.org>
+Link: https://lore.kernel.org/bpf/20231105085801.3742-1-dev@der-flo.net
+Signed-off-by: Alexei Starovoitov <ast@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ kernel/bpf/lpm_trie.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/kernel/bpf/lpm_trie.c b/kernel/bpf/lpm_trie.c
+index 376ff0aed430..d833d74c1c67 100644
+--- a/kernel/bpf/lpm_trie.c
++++ b/kernel/bpf/lpm_trie.c
+@@ -230,6 +230,9 @@ static void *trie_lookup_elem(struct bpf_map *map, void *_key)
+ 	struct lpm_trie_node *node, *found = NULL;
+ 	struct bpf_lpm_trie_key *key = _key;
+ 
++	if (key->prefixlen > trie->max_prefixlen)
++		return NULL;
++
+ 	/* Start walking the trie from the root node ... */
+ 
+ 	for (node = rcu_dereference(trie->root); node;) {
+-- 
+2.43.0
+
+
+From 3557a922ba003674c0a11e0c32a4d80144e94ecc Mon Sep 17 00:00:00 2001
+From: Chao Yu <chao@kernel.org>
+Date: Tue, 28 Nov 2023 17:25:16 +0800
+Subject: [PATCH 04/70] f2fs: fix to avoid dirent corruption
+
+[ Upstream commit 53edb549565f55ccd0bdf43be3d66ce4c2d48b28 ]
+
+As Al reported in link[1]:
+
+f2fs_rename()
+...
+	if (old_dir != new_dir && !whiteout)
+		f2fs_set_link(old_inode, old_dir_entry,
+					old_dir_page, new_dir);
+	else
+		f2fs_put_page(old_dir_page, 0);
+
+You want correct inumber in the ".." link.  And cross-directory
+rename does move the source to new parent, even if you'd been asked
+to leave a whiteout in the old place.
+
+[1] https://lore.kernel.org/all/20231017055040.GN800259@ZenIV/
+
+With below testcase, it may cause dirent corruption, due to it missed
+to call f2fs_set_link() to update ".." link to new directory.
+- mkdir -p dir/foo
+- renameat2 -w dir/foo bar
+
+[ASSERT] (__chk_dots_dentries:1421)  --> Bad inode number[0x4] for '..', parent parent ino is [0x3]
+[FSCK] other corrupted bugs                           [Fail]
+
+Fixes: 7e01e7ad746b ("f2fs: support RENAME_WHITEOUT")
+Cc: Jan Kara <jack@suse.cz>
+Reported-by: Al Viro <viro@zeniv.linux.org.uk>
+Signed-off-by: Chao Yu <chao@kernel.org>
+Reviewed-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Jaegeuk Kim <jaegeuk@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ fs/f2fs/namei.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/fs/f2fs/namei.c b/fs/f2fs/namei.c
+index 6c1bcae40bd2..b12df56a9d6b 100755
+--- a/fs/f2fs/namei.c
++++ b/fs/f2fs/namei.c
+@@ -1057,7 +1057,7 @@ static int f2fs_rename(struct inode *old_dir, struct dentry *old_dentry,
+ 	}
+ 
+ 	if (old_dir_entry) {
+-		if (old_dir != new_dir && !whiteout)
++		if (old_dir != new_dir)
+ 			f2fs_set_link(old_inode, old_dir_entry,
+ 						old_dir_page, new_dir);
+ 		else
+-- 
+2.43.0
+
+
+From 561a2ae7e0caf6d43ea78e8838909b920fbcf30e Mon Sep 17 00:00:00 2001
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sat, 2 Dec 2023 09:01:54 +0800
+Subject: [PATCH 05/70] hwrng: core - Fix page fault dead lock on mmap-ed hwrng
+
+commit 78aafb3884f6bc6636efcc1760c891c8500b9922 upstream.
+
+There is a dead-lock in the hwrng device read path.  This triggers
+when the user reads from /dev/hwrng into memory also mmap-ed from
+/dev/hwrng.  The resulting page fault triggers a recursive read
+which then dead-locks.
+
+Fix this by using a stack buffer when calling copy_to_user.
+
+Reported-by: Edward Adam Davis <eadavis@qq.com>
+Reported-by: syzbot+c52ab18308964d248092@syzkaller.appspotmail.com
+Fixes: 9996508b3353 ("hwrng: core - Replace u32 in driver API with byte array")
+Cc: <stable@vger.kernel.org>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ drivers/char/hw_random/core.c | 34 +++++++++++++++++++++-------------
+ 1 file changed, 21 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/char/hw_random/core.c b/drivers/char/hw_random/core.c
+index 303fd55f9be0..a12561fdd2f0 100644
+--- a/drivers/char/hw_random/core.c
++++ b/drivers/char/hw_random/core.c
+@@ -24,10 +24,13 @@
+ #include <linux/random.h>
+ #include <linux/sched.h>
+ #include <linux/slab.h>
++#include <linux/string.h>
+ #include <linux/uaccess.h>
+ 
+ #define RNG_MODULE_NAME		"hw_random"
+ 
++#define RNG_BUFFER_SIZE (SMP_CACHE_BYTES < 32 ? 32 : SMP_CACHE_BYTES)
++
+ static struct hwrng *current_rng;
+ /* the current rng has been explicitly chosen by user via sysfs */
+ static int cur_rng_set_by_user;
+@@ -59,7 +62,7 @@ static inline int rng_get_data(struct hwrng *rng, u8 *buffer, size_t size,
+ 
+ static size_t rng_buffer_size(void)
+ {
+-	return SMP_CACHE_BYTES < 32 ? 32 : SMP_CACHE_BYTES;
++	return RNG_BUFFER_SIZE;
+ }
+ 
+ static void add_early_randomness(struct hwrng *rng)
+@@ -202,6 +205,7 @@ static inline int rng_get_data(struct hwrng *rng, u8 *buffer, size_t size,
+ static ssize_t rng_dev_read(struct file *filp, char __user *buf,
+ 			    size_t size, loff_t *offp)
+ {
++	u8 buffer[RNG_BUFFER_SIZE];
+ 	ssize_t ret = 0;
+ 	int err = 0;
+ 	int bytes_read, len;
+@@ -229,34 +233,37 @@ static ssize_t rng_dev_read(struct file *filp, char __user *buf,
+ 			if (bytes_read < 0) {
+ 				err = bytes_read;
+ 				goto out_unlock_reading;
++			} else if (bytes_read == 0 &&
++				   (filp->f_flags & O_NONBLOCK)) {
++				err = -EAGAIN;
++				goto out_unlock_reading;
+ 			}
++
+ 			data_avail = bytes_read;
+ 		}
+ 
+-		if (!data_avail) {
+-			if (filp->f_flags & O_NONBLOCK) {
+-				err = -EAGAIN;
+-				goto out_unlock_reading;
+-			}
+-		} else {
+-			len = data_avail;
++		len = data_avail;
++		if (len) {
+ 			if (len > size)
+ 				len = size;
+ 
+ 			data_avail -= len;
+ 
+-			if (copy_to_user(buf + ret, rng_buffer + data_avail,
+-								len)) {
++			memcpy(buffer, rng_buffer + data_avail, len);
++		}
++		mutex_unlock(&reading_mutex);
++		put_rng(rng);
++
++		if (len) {
++			if (copy_to_user(buf + ret, buffer, len)) {
+ 				err = -EFAULT;
+-				goto out_unlock_reading;
++				goto out;
+ 			}
+ 
+ 			size -= len;
+ 			ret += len;
+ 		}
+ 
+-		mutex_unlock(&reading_mutex);
+-		put_rng(rng);
+ 
+ 		if (need_resched())
+ 			schedule_timeout_interruptible(1);
+@@ -267,6 +274,7 @@ static ssize_t rng_dev_read(struct file *filp, char __user *buf,
+ 		}
+ 	}
+ out:
++	memzero_explicit(buffer, sizeof(buffer));
+ 	return ret ? : err;
+ 
+ out_unlock_reading:
+-- 
+2.43.0
+
+
+From a636376d1592c19287d0c8920fcef90a1228dd33 Mon Sep 17 00:00:00 2001
+From: Lin Ma <linma@zju.edu.cn>
+Date: Thu, 18 Jan 2024 21:03:06 +0800
+Subject: [PATCH 06/70] vlan: skip nested type that is not
+ IFLA_VLAN_QOS_MAPPING
+
+[ Upstream commit 6c21660fe221a15c789dee2bc2fd95516bc5aeaf ]
+
+In the vlan_changelink function, a loop is used to parse the nested
+attributes IFLA_VLAN_EGRESS_QOS and IFLA_VLAN_INGRESS_QOS in order to
+obtain the struct ifla_vlan_qos_mapping. These two nested attributes are
+checked in the vlan_validate_qos_map function, which calls
+nla_validate_nested_deprecated with the vlan_map_policy.
+
+However, this deprecated validator applies a LIBERAL strictness, allowing
+the presence of an attribute with the type IFLA_VLAN_QOS_UNSPEC.
+Consequently, the loop in vlan_changelink may parse an attribute of type
+IFLA_VLAN_QOS_UNSPEC and believe it carries a payload of
+struct ifla_vlan_qos_mapping, which is not necessarily true.
+
+To address this issue and ensure compatibility, this patch introduces two
+type checks that skip attributes whose type is not IFLA_VLAN_QOS_MAPPING.
+
+Fixes: 07b5b17e157b ("[VLAN]: Use rtnl_link API")
+Signed-off-by: Lin Ma <linma@zju.edu.cn>
+Reviewed-by: Simon Horman <horms@kernel.org>
+Link: https://lore.kernel.org/r/20240118130306.1644001-1-linma@zju.edu.cn
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/8021q/vlan_netlink.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/net/8021q/vlan_netlink.c b/net/8021q/vlan_netlink.c
+index fdf39dd5e755..aad09715ac49 100644
+--- a/net/8021q/vlan_netlink.c
++++ b/net/8021q/vlan_netlink.c
+@@ -105,12 +105,16 @@ static int vlan_changelink(struct net_device *dev, struct nlattr *tb[],
+ 	}
+ 	if (data[IFLA_VLAN_INGRESS_QOS]) {
+ 		nla_for_each_nested(attr, data[IFLA_VLAN_INGRESS_QOS], rem) {
++			if (nla_type(attr) != IFLA_VLAN_QOS_MAPPING)
++				continue;
+ 			m = nla_data(attr);
+ 			vlan_dev_set_ingress_priority(dev, m->to, m->from);
+ 		}
+ 	}
+ 	if (data[IFLA_VLAN_EGRESS_QOS]) {
+ 		nla_for_each_nested(attr, data[IFLA_VLAN_EGRESS_QOS], rem) {
++			if (nla_type(attr) != IFLA_VLAN_QOS_MAPPING)
++				continue;
+ 			m = nla_data(attr);
+ 			err = vlan_dev_set_egress_priority(dev, m->from, m->to);
+ 			if (err)
+-- 
+2.43.0
+
+
+From b769d867524ab2a2bcb520fa2cd0ffab05ea2235 Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Thu, 18 Jan 2024 18:36:25 +0000
+Subject: [PATCH 07/70] llc: make llc_ui_sendmsg() more robust against bonding
+ changes
+
+[ Upstream commit dad555c816a50c6a6a8a86be1f9177673918c647 ]
+
+syzbot was able to trick llc_ui_sendmsg(), allocating an skb with no
+headroom, but subsequently trying to push 14 bytes of Ethernet header [1]
+
+Like some others, llc_ui_sendmsg() releases the socket lock before
+calling sock_alloc_send_skb().
+Then it acquires it again, but does not redo all the sanity checks
+that were performed.
+
+This fix:
+
+- Uses LL_RESERVED_SPACE() to reserve space.
+- Check all conditions again after socket lock is held again.
+- Do not account Ethernet header for mtu limitation.
+
+[1]
+
+skbuff: skb_under_panic: text:ffff800088baa334 len:1514 put:14 head:ffff0000c9c37000 data:ffff0000c9c36ff2 tail:0x5dc end:0x6c0 dev:bond0
+
+ kernel BUG at net/core/skbuff.c:193 !
+Internal error: Oops - BUG: 00000000f2000800 [#1] PREEMPT SMP
+Modules linked in:
+CPU: 0 PID: 6875 Comm: syz-executor.0 Not tainted 6.7.0-rc8-syzkaller-00101-g0802e17d9aca-dirty #0
+Hardware name: Google Google Compute Engine/Google Compute Engine, BIOS Google 11/17/2023
+pstate: 60400005 (nZCv daif +PAN -UAO -TCO -DIT -SSBS BTYPE=--)
+ pc : skb_panic net/core/skbuff.c:189 [inline]
+ pc : skb_under_panic+0x13c/0x140 net/core/skbuff.c:203
+ lr : skb_panic net/core/skbuff.c:189 [inline]
+ lr : skb_under_panic+0x13c/0x140 net/core/skbuff.c:203
+sp : ffff800096f97000
+x29: ffff800096f97010 x28: ffff80008cc8d668 x27: dfff800000000000
+x26: ffff0000cb970c90 x25: 00000000000005dc x24: ffff0000c9c36ff2
+x23: ffff0000c9c37000 x22: 00000000000005ea x21: 00000000000006c0
+x20: 000000000000000e x19: ffff800088baa334 x18: 1fffe000368261ce
+x17: ffff80008e4ed000 x16: ffff80008a8310f8 x15: 0000000000000001
+x14: 1ffff00012df2d58 x13: 0000000000000000 x12: 0000000000000000
+x11: 0000000000000001 x10: 0000000000ff0100 x9 : e28a51f1087e8400
+x8 : e28a51f1087e8400 x7 : ffff80008028f8d0 x6 : 0000000000000000
+x5 : 0000000000000001 x4 : 0000000000000001 x3 : ffff800082b78714
+x2 : 0000000000000001 x1 : 0000000100000000 x0 : 0000000000000089
+Call trace:
+  skb_panic net/core/skbuff.c:189 [inline]
+  skb_under_panic+0x13c/0x140 net/core/skbuff.c:203
+  skb_push+0xf0/0x108 net/core/skbuff.c:2451
+  eth_header+0x44/0x1f8 net/ethernet/eth.c:83
+  dev_hard_header include/linux/netdevice.h:3188 [inline]
+  llc_mac_hdr_init+0x110/0x17c net/llc/llc_output.c:33
+  llc_sap_action_send_xid_c+0x170/0x344 net/llc/llc_s_ac.c:85
+  llc_exec_sap_trans_actions net/llc/llc_sap.c:153 [inline]
+  llc_sap_next_state net/llc/llc_sap.c:182 [inline]
+  llc_sap_state_process+0x1ec/0x774 net/llc/llc_sap.c:209
+  llc_build_and_send_xid_pkt+0x12c/0x1c0 net/llc/llc_sap.c:270
+  llc_ui_sendmsg+0x7bc/0xb1c net/llc/af_llc.c:997
+  sock_sendmsg_nosec net/socket.c:730 [inline]
+  __sock_sendmsg net/socket.c:745 [inline]
+  sock_sendmsg+0x194/0x274 net/socket.c:767
+  splice_to_socket+0x7cc/0xd58 fs/splice.c:881
+  do_splice_from fs/splice.c:933 [inline]
+  direct_splice_actor+0xe4/0x1c0 fs/splice.c:1142
+  splice_direct_to_actor+0x2a0/0x7e4 fs/splice.c:1088
+  do_splice_direct+0x20c/0x348 fs/splice.c:1194
+  do_sendfile+0x4bc/0xc70 fs/read_write.c:1254
+  __do_sys_sendfile64 fs/read_write.c:1322 [inline]
+  __se_sys_sendfile64 fs/read_write.c:1308 [inline]
+  __arm64_sys_sendfile64+0x160/0x3b4 fs/read_write.c:1308
+  __invoke_syscall arch/arm64/kernel/syscall.c:37 [inline]
+  invoke_syscall+0x98/0x2b8 arch/arm64/kernel/syscall.c:51
+  el0_svc_common+0x130/0x23c arch/arm64/kernel/syscall.c:136
+  do_el0_svc+0x48/0x58 arch/arm64/kernel/syscall.c:155
+  el0_svc+0x54/0x158 arch/arm64/kernel/entry-common.c:678
+  el0t_64_sync_handler+0x84/0xfc arch/arm64/kernel/entry-common.c:696
+  el0t_64_sync+0x190/0x194 arch/arm64/kernel/entry.S:595
+Code: aa1803e6 aa1903e7 a90023f5 94792f6a (d4210000)
+
+Fixes: 1da177e4c3f4 ("Linux-2.6.12-rc2")
+Reported-and-tested-by: syzbot+2a7024e9502df538e8ef@syzkaller.appspotmail.com
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Reviewed-by: Kuniyuki Iwashima <kuniyu@amazon.com>
+Link: https://lore.kernel.org/r/20240118183625.4007013-1-edumazet@google.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/llc/af_llc.c | 24 ++++++++++++++++--------
+ 1 file changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/net/llc/af_llc.c b/net/llc/af_llc.c
+index 1e20b719fb3c..7057435c38dd 100644
+--- a/net/llc/af_llc.c
++++ b/net/llc/af_llc.c
+@@ -926,14 +926,15 @@ static int llc_ui_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
+  */
+ static int llc_ui_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
+ {
++	DECLARE_SOCKADDR(struct sockaddr_llc *, addr, msg->msg_name);
+ 	struct sock *sk = sock->sk;
+ 	struct llc_sock *llc = llc_sk(sk);
+-	DECLARE_SOCKADDR(struct sockaddr_llc *, addr, msg->msg_name);
+ 	int flags = msg->msg_flags;
+ 	int noblock = flags & MSG_DONTWAIT;
++	int rc = -EINVAL, copied = 0, hdrlen, hh_len;
+ 	struct sk_buff *skb = NULL;
++	struct net_device *dev;
+ 	size_t size = 0;
+-	int rc = -EINVAL, copied = 0, hdrlen;
+ 
+ 	dprintk("%s: sending from %02X to %02X\n", __func__,
+ 		llc->laddr.lsap, llc->daddr.lsap);
+@@ -953,22 +954,29 @@ static int llc_ui_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
+ 		if (rc)
+ 			goto out;
+ 	}
+-	hdrlen = llc->dev->hard_header_len + llc_ui_header_len(sk, addr);
++	dev = llc->dev;
++	hh_len = LL_RESERVED_SPACE(dev);
++	hdrlen = llc_ui_header_len(sk, addr);
+ 	size = hdrlen + len;
+-	if (size > llc->dev->mtu)
+-		size = llc->dev->mtu;
++	size = min_t(size_t, size, READ_ONCE(dev->mtu));
+ 	copied = size - hdrlen;
+ 	rc = -EINVAL;
+ 	if (copied < 0)
+ 		goto out;
+ 	release_sock(sk);
+-	skb = sock_alloc_send_skb(sk, size, noblock, &rc);
++	skb = sock_alloc_send_skb(sk, hh_len + size, noblock, &rc);
+ 	lock_sock(sk);
+ 	if (!skb)
+ 		goto out;
+-	skb->dev      = llc->dev;
++	if (sock_flag(sk, SOCK_ZAPPED) ||
++	    llc->dev != dev ||
++	    hdrlen != llc_ui_header_len(sk, addr) ||
++	    hh_len != LL_RESERVED_SPACE(dev) ||
++	    size > READ_ONCE(dev->mtu))
++		goto out;
++	skb->dev      = dev;
+ 	skb->protocol = llc_proto_type(addr->sllc_arphrd);
+-	skb_reserve(skb, hdrlen);
++	skb_reserve(skb, hh_len + hdrlen);
+ 	rc = memcpy_from_msg(skb_put(skb, copied), msg, copied);
+ 	if (rc)
+ 		goto out;
+-- 
+2.43.0
+
+
+From ad6748b8d3ea8e3df54a93aae5b9409ae37a9bc2 Mon Sep 17 00:00:00 2001
+From: Salvatore Dipietro <dipiets@amazon.com>
+Date: Fri, 19 Jan 2024 11:01:33 -0800
+Subject: [PATCH 08/70] tcp: Add memory barrier to tcp_push()
+
+[ Upstream commit 7267e8dcad6b2f9fce05a6a06335d7040acbc2b6 ]
+
+On CPUs with weak memory models, reads and updates performed by tcp_push
+to the sk variables can get reordered leaving the socket throttled when
+it should not. The tasklet running tcp_wfree() may also not observe the
+memory updates in time and will skip flushing any packets throttled by
+tcp_push(), delaying the sending. This can pathologically cause 40ms
+extra latency due to bad interactions with delayed acks.
+
+Adding a memory barrier in tcp_push removes the bug, similarly to the
+previous commit bf06200e732d ("tcp: tsq: fix nonagle handling").
+smp_mb__after_atomic() is used to not incur in unnecessary overhead
+on x86 since not affected.
+
+Patch has been tested using an AWS c7g.2xlarge instance with Ubuntu
+22.04 and Apache Tomcat 9.0.83 running the basic servlet below:
+
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+public class HelloWorldServlet extends HttpServlet {
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+      throws ServletException, IOException {
+        response.setContentType("text/html;charset=utf-8");
+        OutputStreamWriter osw = new OutputStreamWriter(response.getOutputStream(),"UTF-8");
+        String s = "a".repeat(3096);
+        osw.write(s,0,s.length());
+        osw.flush();
+    }
+}
+
+Load was applied using wrk2 (https://github.com/kinvolk/wrk2) from an AWS
+c6i.8xlarge instance. Before the patch an additional 40ms latency from P99.99+
+values is observed while, with the patch, the extra latency disappears.
+
+No patch and tcp_autocorking=1
+./wrk -t32 -c128 -d40s --latency -R10000  http://172.31.60.173:8080/hello/hello
+  ...
+ 50.000%    0.91ms
+ 75.000%    1.13ms
+ 90.000%    1.46ms
+ 99.000%    1.74ms
+ 99.900%    1.89ms
+ 99.990%   41.95ms  <<< 40+ ms extra latency
+ 99.999%   48.32ms
+100.000%   48.96ms
+
+With patch and tcp_autocorking=1
+./wrk -t32 -c128 -d40s --latency -R10000  http://172.31.60.173:8080/hello/hello
+  ...
+ 50.000%    0.90ms
+ 75.000%    1.13ms
+ 90.000%    1.45ms
+ 99.000%    1.72ms
+ 99.900%    1.83ms
+ 99.990%    2.11ms  <<< no 40+ ms extra latency
+ 99.999%    2.53ms
+100.000%    2.62ms
+
+Patch has been also tested on x86 (m7i.2xlarge instance) which it is not
+affected by this issue and the patch doesn't introduce any additional
+delay.
+
+Fixes: 7aa5470c2c09 ("tcp: tsq: move tsq_flags close to sk_wmem_alloc")
+Signed-off-by: Salvatore Dipietro <dipiets@amazon.com>
+Reviewed-by: Eric Dumazet <edumazet@google.com>
+Link: https://lore.kernel.org/r/20240119190133.43698-1-dipiets@amazon.com
+Signed-off-by: Paolo Abeni <pabeni@redhat.com>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/ipv4/tcp.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 23c71b323425..0c6708bb9863 100755
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -726,6 +726,7 @@ static void tcp_push(struct sock *sk, int flags, int mss_now,
+ 		if (!test_bit(TSQ_THROTTLED, &sk->sk_tsq_flags)) {
+ 			NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPAUTOCORKING);
+ 			set_bit(TSQ_THROTTLED, &sk->sk_tsq_flags);
++			smp_mb__after_atomic();
+ 		}
+ 		/* It is possible TX completion already happened
+ 		 * before we set TSQ_THROTTLED.
+-- 
+2.43.0
+
+
+From 124e6f5268e86f7d2ec924a2efddfb137d364ff1 Mon Sep 17 00:00:00 2001
+From: Florian Westphal <fw@strlen.de>
+Date: Sat, 20 Jan 2024 22:50:04 +0100
+Subject: [PATCH 09/70] netfilter: nf_tables: reject QUEUE/DROP verdict
+ parameters
+
+commit f342de4e2f33e0e39165d8639387aa6c19dff660 upstream.
+
+This reverts commit e0abdadcc6e1.
+
+core.c:nf_hook_slow assumes that the upper 16 bits of NF_DROP
+verdicts contain a valid errno, i.e. -EPERM, -EHOSTUNREACH or similar,
+or 0.
+
+Due to the reverted commit, its possible to provide a positive
+value, e.g. NF_ACCEPT (1), which results in use-after-free.
+
+Its not clear to me why this commit was made.
+
+NF_QUEUE is not used by nftables; "queue" rules in nftables
+will result in use of "nft_queue" expression.
+
+If we later need to allow specifiying errno values from userspace
+(do not know why), this has to call NF_DROP_GETERR and check that
+"err <= 0" holds true.
+
+Fixes: e0abdadcc6e1 ("netfilter: nf_tables: accept QUEUE/DROP verdict parameters")
+Cc: stable@vger.kernel.org
+Reported-by: Notselwyn <notselwyn@pwning.tech>
+Signed-off-by: Florian Westphal <fw@strlen.de>
+Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ net/netfilter/nf_tables_api.c | 16 ++++++----------
+ 1 file changed, 6 insertions(+), 10 deletions(-)
+
+diff --git a/net/netfilter/nf_tables_api.c b/net/netfilter/nf_tables_api.c
+index 27c24c99d23b..6686156d74ba 100644
+--- a/net/netfilter/nf_tables_api.c
++++ b/net/netfilter/nf_tables_api.c
+@@ -5889,16 +5889,10 @@ static int nft_verdict_init(const struct nft_ctx *ctx, struct nft_data *data,
+ 	data->verdict.code = ntohl(nla_get_be32(tb[NFTA_VERDICT_CODE]));
+ 
+ 	switch (data->verdict.code) {
+-	default:
+-		switch (data->verdict.code & NF_VERDICT_MASK) {
+-		case NF_ACCEPT:
+-		case NF_DROP:
+-		case NF_QUEUE:
+-			break;
+-		default:
+-			return -EINVAL;
+-		}
+-		/* fall through */
++	case NF_ACCEPT:
++	case NF_DROP:
++	case NF_QUEUE:
++		break;
+ 	case NFT_CONTINUE:
+ 	case NFT_BREAK:
+ 	case NFT_RETURN:
+@@ -5918,6 +5912,8 @@ static int nft_verdict_init(const struct nft_ctx *ctx, struct nft_data *data,
+ 
+ 		data->verdict.chain = chain;
+ 		break;
++	default:
++		return -EINVAL;
+ 	}
+ 
+ 	desc->len = sizeof(data->verdict);
+-- 
+2.43.0
+
+
+From 08ace9d88ffe7b38efc29e877a26e23db37b7c92 Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Fri, 26 Jan 2024 16:55:32 +0000
+Subject: [PATCH 10/70] llc: call sock_orphan() at release time
+
+[ Upstream commit aa2b2eb3934859904c287bf5434647ba72e14c1c ]
+
+syzbot reported an interesting trace [1] caused by a stale sk->sk_wq
+pointer in a closed llc socket.
+
+In commit ff7b11aa481f ("net: socket: set sock->sk to NULL after
+calling proto_ops::release()") Eric Biggers hinted that some protocols
+are missing a sock_orphan(), we need to perform a full audit.
+
+In net-next, I plan to clear sock->sk from sock_orphan() and
+amend Eric patch to add a warning.
+
+[1]
+ BUG: KASAN: slab-use-after-free in list_empty include/linux/list.h:373 [inline]
+ BUG: KASAN: slab-use-after-free in waitqueue_active include/linux/wait.h:127 [inline]
+ BUG: KASAN: slab-use-after-free in sock_def_write_space_wfree net/core/sock.c:3384 [inline]
+ BUG: KASAN: slab-use-after-free in sock_wfree+0x9a8/0x9d0 net/core/sock.c:2468
+Read of size 8 at addr ffff88802f4fc880 by task ksoftirqd/1/27
+
+CPU: 1 PID: 27 Comm: ksoftirqd/1 Not tainted 6.8.0-rc1-syzkaller-00049-g6098d87eaf31 #0
+Hardware name: QEMU Standard PC (Q35 + ICH9, 2009), BIOS 1.16.2-debian-1.16.2-1 04/01/2014
+Call Trace:
+ <TASK>
+  __dump_stack lib/dump_stack.c:88 [inline]
+  dump_stack_lvl+0xd9/0x1b0 lib/dump_stack.c:106
+  print_address_description mm/kasan/report.c:377 [inline]
+  print_report+0xc4/0x620 mm/kasan/report.c:488
+  kasan_report+0xda/0x110 mm/kasan/report.c:601
+  list_empty include/linux/list.h:373 [inline]
+  waitqueue_active include/linux/wait.h:127 [inline]
+  sock_def_write_space_wfree net/core/sock.c:3384 [inline]
+  sock_wfree+0x9a8/0x9d0 net/core/sock.c:2468
+  skb_release_head_state+0xa3/0x2b0 net/core/skbuff.c:1080
+  skb_release_all net/core/skbuff.c:1092 [inline]
+  napi_consume_skb+0x119/0x2b0 net/core/skbuff.c:1404
+  e1000_unmap_and_free_tx_resource+0x144/0x200 drivers/net/ethernet/intel/e1000/e1000_main.c:1970
+  e1000_clean_tx_irq drivers/net/ethernet/intel/e1000/e1000_main.c:3860 [inline]
+  e1000_clean+0x4a1/0x26e0 drivers/net/ethernet/intel/e1000/e1000_main.c:3801
+  __napi_poll.constprop.0+0xb4/0x540 net/core/dev.c:6576
+  napi_poll net/core/dev.c:6645 [inline]
+  net_rx_action+0x956/0xe90 net/core/dev.c:6778
+  __do_softirq+0x21a/0x8de kernel/softirq.c:553
+  run_ksoftirqd kernel/softirq.c:921 [inline]
+  run_ksoftirqd+0x31/0x60 kernel/softirq.c:913
+  smpboot_thread_fn+0x660/0xa10 kernel/smpboot.c:164
+  kthread+0x2c6/0x3a0 kernel/kthread.c:388
+  ret_from_fork+0x45/0x80 arch/x86/kernel/process.c:147
+  ret_from_fork_asm+0x11/0x20 arch/x86/entry/entry_64.S:242
+ </TASK>
+
+Allocated by task 5167:
+  kasan_save_stack+0x33/0x50 mm/kasan/common.c:47
+  kasan_save_track+0x14/0x30 mm/kasan/common.c:68
+  unpoison_slab_object mm/kasan/common.c:314 [inline]
+  __kasan_slab_alloc+0x81/0x90 mm/kasan/common.c:340
+  kasan_slab_alloc include/linux/kasan.h:201 [inline]
+  slab_post_alloc_hook mm/slub.c:3813 [inline]
+  slab_alloc_node mm/slub.c:3860 [inline]
+  kmem_cache_alloc_lru+0x142/0x6f0 mm/slub.c:3879
+  alloc_inode_sb include/linux/fs.h:3019 [inline]
+  sock_alloc_inode+0x25/0x1c0 net/socket.c:308
+  alloc_inode+0x5d/0x220 fs/inode.c:260
+  new_inode_pseudo+0x16/0x80 fs/inode.c:1005
+  sock_alloc+0x40/0x270 net/socket.c:634
+  __sock_create+0xbc/0x800 net/socket.c:1535
+  sock_create net/socket.c:1622 [inline]
+  __sys_socket_create net/socket.c:1659 [inline]
+  __sys_socket+0x14c/0x260 net/socket.c:1706
+  __do_sys_socket net/socket.c:1720 [inline]
+  __se_sys_socket net/socket.c:1718 [inline]
+  __x64_sys_socket+0x72/0xb0 net/socket.c:1718
+  do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+  do_syscall_64+0xd3/0x250 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x63/0x6b
+
+Freed by task 0:
+  kasan_save_stack+0x33/0x50 mm/kasan/common.c:47
+  kasan_save_track+0x14/0x30 mm/kasan/common.c:68
+  kasan_save_free_info+0x3f/0x60 mm/kasan/generic.c:640
+  poison_slab_object mm/kasan/common.c:241 [inline]
+  __kasan_slab_free+0x121/0x1b0 mm/kasan/common.c:257
+  kasan_slab_free include/linux/kasan.h:184 [inline]
+  slab_free_hook mm/slub.c:2121 [inline]
+  slab_free mm/slub.c:4299 [inline]
+  kmem_cache_free+0x129/0x350 mm/slub.c:4363
+  i_callback+0x43/0x70 fs/inode.c:249
+  rcu_do_batch kernel/rcu/tree.c:2158 [inline]
+  rcu_core+0x819/0x1680 kernel/rcu/tree.c:2433
+  __do_softirq+0x21a/0x8de kernel/softirq.c:553
+
+Last potentially related work creation:
+  kasan_save_stack+0x33/0x50 mm/kasan/common.c:47
+  __kasan_record_aux_stack+0xba/0x100 mm/kasan/generic.c:586
+  __call_rcu_common.constprop.0+0x9a/0x7b0 kernel/rcu/tree.c:2683
+  destroy_inode+0x129/0x1b0 fs/inode.c:315
+  iput_final fs/inode.c:1739 [inline]
+  iput.part.0+0x560/0x7b0 fs/inode.c:1765
+  iput+0x5c/0x80 fs/inode.c:1755
+  dentry_unlink_inode+0x292/0x430 fs/dcache.c:400
+  __dentry_kill+0x1ca/0x5f0 fs/dcache.c:603
+  dput.part.0+0x4ac/0x9a0 fs/dcache.c:845
+  dput+0x1f/0x30 fs/dcache.c:835
+  __fput+0x3b9/0xb70 fs/file_table.c:384
+  task_work_run+0x14d/0x240 kernel/task_work.c:180
+  exit_task_work include/linux/task_work.h:38 [inline]
+  do_exit+0xa8a/0x2ad0 kernel/exit.c:871
+  do_group_exit+0xd4/0x2a0 kernel/exit.c:1020
+  __do_sys_exit_group kernel/exit.c:1031 [inline]
+  __se_sys_exit_group kernel/exit.c:1029 [inline]
+  __x64_sys_exit_group+0x3e/0x50 kernel/exit.c:1029
+  do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+  do_syscall_64+0xd3/0x250 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x63/0x6b
+
+The buggy address belongs to the object at ffff88802f4fc800
+ which belongs to the cache sock_inode_cache of size 1408
+The buggy address is located 128 bytes inside of
+ freed 1408-byte region [ffff88802f4fc800, ffff88802f4fcd80)
+
+The buggy address belongs to the physical page:
+page:ffffea0000bd3e00 refcount:1 mapcount:0 mapping:0000000000000000 index:0x0 pfn:0x2f4f8
+head:ffffea0000bd3e00 order:3 entire_mapcount:0 nr_pages_mapped:0 pincount:0
+anon flags: 0xfff00000000840(slab|head|node=0|zone=1|lastcpupid=0x7ff)
+page_type: 0xffffffff()
+raw: 00fff00000000840 ffff888013b06b40 0000000000000000 0000000000000001
+raw: 0000000000000000 0000000080150015 00000001ffffffff 0000000000000000
+page dumped because: kasan: bad access detected
+page_owner tracks the page as allocated
+page last allocated via order 3, migratetype Reclaimable, gfp_mask 0xd20d0(__GFP_IO|__GFP_FS|__GFP_NOWARN|__GFP_NORETRY|__GFP_COMP|__GFP_NOMEMALLOC|__GFP_RECLAIMABLE), pid 4956, tgid 4956 (sshd), ts 31423924727, free_ts 0
+  set_page_owner include/linux/page_owner.h:31 [inline]
+  post_alloc_hook+0x2d0/0x350 mm/page_alloc.c:1533
+  prep_new_page mm/page_alloc.c:1540 [inline]
+  get_page_from_freelist+0xa28/0x3780 mm/page_alloc.c:3311
+  __alloc_pages+0x22f/0x2440 mm/page_alloc.c:4567
+  __alloc_pages_node include/linux/gfp.h:238 [inline]
+  alloc_pages_node include/linux/gfp.h:261 [inline]
+  alloc_slab_page mm/slub.c:2190 [inline]
+  allocate_slab mm/slub.c:2354 [inline]
+  new_slab+0xcc/0x3a0 mm/slub.c:2407
+  ___slab_alloc+0x4af/0x19a0 mm/slub.c:3540
+  __slab_alloc.constprop.0+0x56/0xa0 mm/slub.c:3625
+  __slab_alloc_node mm/slub.c:3678 [inline]
+  slab_alloc_node mm/slub.c:3850 [inline]
+  kmem_cache_alloc_lru+0x379/0x6f0 mm/slub.c:3879
+  alloc_inode_sb include/linux/fs.h:3019 [inline]
+  sock_alloc_inode+0x25/0x1c0 net/socket.c:308
+  alloc_inode+0x5d/0x220 fs/inode.c:260
+  new_inode_pseudo+0x16/0x80 fs/inode.c:1005
+  sock_alloc+0x40/0x270 net/socket.c:634
+  __sock_create+0xbc/0x800 net/socket.c:1535
+  sock_create net/socket.c:1622 [inline]
+  __sys_socket_create net/socket.c:1659 [inline]
+  __sys_socket+0x14c/0x260 net/socket.c:1706
+  __do_sys_socket net/socket.c:1720 [inline]
+  __se_sys_socket net/socket.c:1718 [inline]
+  __x64_sys_socket+0x72/0xb0 net/socket.c:1718
+  do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+  do_syscall_64+0xd3/0x250 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x63/0x6b
+page_owner free stack trace missing
+
+Memory state around the buggy address:
+ ffff88802f4fc780: fc fc fc fc fc fc fc fc fc fc fc fc fc fc fc fc
+ ffff88802f4fc800: fa fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+>ffff88802f4fc880: fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+                   ^
+ ffff88802f4fc900: fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+ ffff88802f4fc980: fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb fb
+
+Fixes: 43815482370c ("net: sock_def_readable() and friends RCU conversion")
+Reported-and-tested-by: syzbot+32b89eaa102b372ff76d@syzkaller.appspotmail.com
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Eric Biggers <ebiggers@google.com>
+Cc: Kuniyuki Iwashima <kuniyu@amazon.com>
+Reviewed-by: Kuniyuki Iwashima <kuniyu@amazon.com>
+Link: https://lore.kernel.org/r/20240126165532.3396702-1-edumazet@google.com
+Signed-off-by: Paolo Abeni <pabeni@redhat.com>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/llc/af_llc.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/net/llc/af_llc.c b/net/llc/af_llc.c
+index 7057435c38dd..727af511297c 100644
+--- a/net/llc/af_llc.c
++++ b/net/llc/af_llc.c
+@@ -227,6 +227,8 @@ static int llc_ui_release(struct socket *sock)
+ 	if (llc->dev)
+ 		dev_put(llc->dev);
+ 	sock_put(sk);
++	sock_orphan(sk);
++	sock->sk = NULL;
+ 	llc_sk_free(sk);
+ out:
+ 	return 0;
+-- 
+2.43.0
+
+
+From 0f028ce6bd50aea56072acc9b30adac69e46a505 Mon Sep 17 00:00:00 2001
+From: Pablo Neira Ayuso <pablo@netfilter.org>
+Date: Mon, 29 Jan 2024 11:09:43 +0100
+Subject: [PATCH 11/70] netfilter: nf_log: replace BUG_ON by WARN_ON_ONCE when
+ putting logger
+
+[ Upstream commit 259eb32971e9eb24d1777a28d82730659f50fdcb ]
+
+Module reference is bumped for each user, this should not ever happen.
+
+But BUG_ON check should use rcu_access_pointer() instead.
+
+If this ever happens, do WARN_ON_ONCE() instead of BUG_ON() and
+consolidate pointer check under the rcu read side lock section.
+
+Fixes: fab4085f4e24 ("netfilter: log: nf_log_packet() as real unified interface")
+Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/netfilter/nf_log.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/net/netfilter/nf_log.c b/net/netfilter/nf_log.c
+index 1ac965c929b4..6403e0e04907 100644
+--- a/net/netfilter/nf_log.c
++++ b/net/netfilter/nf_log.c
+@@ -202,11 +202,12 @@ void nf_logger_put(int pf, enum nf_log_type type)
+ 		return;
+ 	}
+ 
+-	BUG_ON(loggers[pf][type] == NULL);
+-
+ 	rcu_read_lock();
+ 	logger = rcu_dereference(loggers[pf][type]);
+-	module_put(logger->me);
++	if (!logger)
++		WARN_ON_ONCE(1);
++	else
++		module_put(logger->me);
+ 	rcu_read_unlock();
+ }
+ EXPORT_SYMBOL_GPL(nf_logger_put);
+-- 
+2.43.0
+
+
+From f6bcbba06c2a36d071774238b21ea03187a60723 Mon Sep 17 00:00:00 2001
+From: Frank Li <Frank.Li@nxp.com>
+Date: Tue, 23 Jan 2024 12:28:41 -0500
+Subject: [PATCH 12/70] dmaengine: fix is_slave_direction() return false when
+ DMA_DEV_TO_DEV
+
+[ Upstream commit a22fe1d6dec7e98535b97249fdc95c2be79120bb ]
+
+is_slave_direction() should return true when direction is DMA_DEV_TO_DEV.
+
+Fixes: 49920bc66984 ("dmaengine: add new enum dma_transfer_direction")
+Signed-off-by: Frank Li <Frank.Li@nxp.com>
+Link: https://lore.kernel.org/r/20240123172842.3764529-1-Frank.Li@nxp.com
+Signed-off-by: Vinod Koul <vkoul@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ include/linux/dmaengine.h | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/dmaengine.h b/include/linux/dmaengine.h
+index 8089e28539f1..d5a7d320e05c 100644
+--- a/include/linux/dmaengine.h
++++ b/include/linux/dmaengine.h
+@@ -816,7 +816,8 @@ static inline int dmaengine_slave_config(struct dma_chan *chan,
+ 
+ static inline bool is_slave_direction(enum dma_transfer_direction direction)
+ {
+-	return (direction == DMA_MEM_TO_DEV) || (direction == DMA_DEV_TO_MEM);
++	return (direction == DMA_MEM_TO_DEV) || (direction == DMA_DEV_TO_MEM) ||
++	       (direction == DMA_DEV_TO_DEV);
+ }
+ 
+ static inline struct dma_async_tx_descriptor *dmaengine_prep_slave_single(
+-- 
+2.43.0
+
+
+From 86a96dec178d546caa5df5cf2256f18357d5ff10 Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Fri, 2 Feb 2024 09:54:04 +0000
+Subject: [PATCH 13/70] inet: read sk->sk_family once in inet_recv_error()
+
+[ Upstream commit eef00a82c568944f113f2de738156ac591bbd5cd ]
+
+inet_recv_error() is called without holding the socket lock.
+
+IPv6 socket could mutate to IPv4 with IPV6_ADDRFORM
+socket option and trigger a KCSAN warning.
+
+Fixes: f4713a3dfad0 ("net-timestamp: make tcp_recvmsg call ipv6_recv_error for AF_INET6 socks")
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Willem de Bruijn <willemb@google.com>
+Reviewed-by: Willem de Bruijn <willemb@google.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/ipv4/af_inet.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/net/ipv4/af_inet.c b/net/ipv4/af_inet.c
+index 9234bf9699ab..22e3f87a4d38 100644
+--- a/net/ipv4/af_inet.c
++++ b/net/ipv4/af_inet.c
+@@ -1540,10 +1540,12 @@ EXPORT_SYMBOL(inet_current_timestamp);
+ 
+ int inet_recv_error(struct sock *sk, struct msghdr *msg, int len, int *addr_len)
+ {
+-	if (sk->sk_family == AF_INET)
++	unsigned int family = READ_ONCE(sk->sk_family);
++
++	if (family == AF_INET)
+ 		return ip_recv_error(sk, msg, len, addr_len);
+ #if IS_ENABLED(CONFIG_IPV6)
+-	if (sk->sk_family == AF_INET6)
++	if (family == AF_INET6)
+ 		return pingv6_ops.ipv6_recv_error(sk, msg, len, addr_len);
+ #endif
+ 	return -EINVAL;
+-- 
+2.43.0
+
+
+From 70f2fa4772bca0872f3495feb9f453caa730ff82 Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Mon, 5 Feb 2024 17:10:04 +0000
+Subject: [PATCH 14/70] ppp_async: limit MRU to 64K
+
+[ Upstream commit cb88cb53badb8aeb3955ad6ce80b07b598e310b8 ]
+
+syzbot triggered a warning [1] in __alloc_pages():
+
+WARN_ON_ONCE_GFP(order > MAX_PAGE_ORDER, gfp)
+
+Willem fixed a similar issue in commit c0a2a1b0d631 ("ppp: limit MRU to 64K")
+
+Adopt the same sanity check for ppp_async_ioctl(PPPIOCSMRU)
+
+[1]:
+
+ WARNING: CPU: 1 PID: 11 at mm/page_alloc.c:4543 __alloc_pages+0x308/0x698 mm/page_alloc.c:4543
+Modules linked in:
+CPU: 1 PID: 11 Comm: kworker/u4:0 Not tainted 6.8.0-rc2-syzkaller-g41bccc98fb79 #0
+Hardware name: Google Google Compute Engine/Google Compute Engine, BIOS Google 11/17/2023
+Workqueue: events_unbound flush_to_ldisc
+pstate: 204000c5 (nzCv daIF +PAN -UAO -TCO -DIT -SSBS BTYPE=--)
+ pc : __alloc_pages+0x308/0x698 mm/page_alloc.c:4543
+ lr : __alloc_pages+0xc8/0x698 mm/page_alloc.c:4537
+sp : ffff800093967580
+x29: ffff800093967660 x28: ffff8000939675a0 x27: dfff800000000000
+x26: ffff70001272ceb4 x25: 0000000000000000 x24: ffff8000939675c0
+x23: 0000000000000000 x22: 0000000000060820 x21: 1ffff0001272ceb8
+x20: ffff8000939675e0 x19: 0000000000000010 x18: ffff800093967120
+x17: ffff800083bded5c x16: ffff80008ac97500 x15: 0000000000000005
+x14: 1ffff0001272cebc x13: 0000000000000000 x12: 0000000000000000
+x11: ffff70001272cec1 x10: 1ffff0001272cec0 x9 : 0000000000000001
+x8 : ffff800091c91000 x7 : 0000000000000000 x6 : 000000000000003f
+x5 : 00000000ffffffff x4 : 0000000000000000 x3 : 0000000000000020
+x2 : 0000000000000008 x1 : 0000000000000000 x0 : ffff8000939675e0
+Call trace:
+  __alloc_pages+0x308/0x698 mm/page_alloc.c:4543
+  __alloc_pages_node include/linux/gfp.h:238 [inline]
+  alloc_pages_node include/linux/gfp.h:261 [inline]
+  __kmalloc_large_node+0xbc/0x1fc mm/slub.c:3926
+  __do_kmalloc_node mm/slub.c:3969 [inline]
+  __kmalloc_node_track_caller+0x418/0x620 mm/slub.c:4001
+  kmalloc_reserve+0x17c/0x23c net/core/skbuff.c:590
+  __alloc_skb+0x1c8/0x3d8 net/core/skbuff.c:651
+  __netdev_alloc_skb+0xb8/0x3e8 net/core/skbuff.c:715
+  netdev_alloc_skb include/linux/skbuff.h:3235 [inline]
+  dev_alloc_skb include/linux/skbuff.h:3248 [inline]
+  ppp_async_input drivers/net/ppp/ppp_async.c:863 [inline]
+  ppp_asynctty_receive+0x588/0x186c drivers/net/ppp/ppp_async.c:341
+  tty_ldisc_receive_buf+0x12c/0x15c drivers/tty/tty_buffer.c:390
+  tty_port_default_receive_buf+0x74/0xac drivers/tty/tty_port.c:37
+  receive_buf drivers/tty/tty_buffer.c:444 [inline]
+  flush_to_ldisc+0x284/0x6e4 drivers/tty/tty_buffer.c:494
+  process_one_work+0x694/0x1204 kernel/workqueue.c:2633
+  process_scheduled_works kernel/workqueue.c:2706 [inline]
+  worker_thread+0x938/0xef4 kernel/workqueue.c:2787
+  kthread+0x288/0x310 kernel/kthread.c:388
+  ret_from_fork+0x10/0x20 arch/arm64/kernel/entry.S:860
+
+Fixes: 1da177e4c3f4 ("Linux-2.6.12-rc2")
+Reported-and-tested-by: syzbot+c5da1f087c9e4ec6c933@syzkaller.appspotmail.com
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Reviewed-by: Willem de Bruijn <willemb@google.com>
+Link: https://lore.kernel.org/r/20240205171004.1059724-1-edumazet@google.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/net/ppp/ppp_async.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/net/ppp/ppp_async.c b/drivers/net/ppp/ppp_async.c
+index f347e5ac6677..7172dd35f619 100644
+--- a/drivers/net/ppp/ppp_async.c
++++ b/drivers/net/ppp/ppp_async.c
+@@ -474,6 +474,10 @@ ppp_async_ioctl(struct ppp_channel *chan, unsigned int cmd, unsigned long arg)
+ 	case PPPIOCSMRU:
+ 		if (get_user(val, p))
+ 			break;
++		if (val > U16_MAX) {
++			err = -EINVAL;
++			break;
++		}
+ 		if (val < PPP_MRU)
+ 			val = PPP_MRU;
+ 		ap->mru = val;
+-- 
+2.43.0
+
+
+From ae44a781c9c274b58fa27e991f6feac18f0aca6d Mon Sep 17 00:00:00 2001
+From: Pablo Neira Ayuso <pablo@netfilter.org>
+Date: Thu, 1 Feb 2024 23:33:29 +0100
+Subject: [PATCH 15/70] netfilter: nft_compat: reject unused compat flag
+
+[ Upstream commit 292781c3c5485ce33bd22b2ef1b2bed709b4d672 ]
+
+Flag (1 << 0) is ignored is set, never used, reject it it with EINVAL
+instead.
+
+Fixes: 0ca743a55991 ("netfilter: nf_tables: add compatibility layer for x_tables")
+Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ include/uapi/linux/netfilter/nf_tables.h | 2 ++
+ net/netfilter/nft_compat.c               | 3 ++-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/include/uapi/linux/netfilter/nf_tables.h b/include/uapi/linux/netfilter/nf_tables.h
+index f64eb435b5e2..d74a70594956 100644
+--- a/include/uapi/linux/netfilter/nf_tables.h
++++ b/include/uapi/linux/netfilter/nf_tables.h
+@@ -229,9 +229,11 @@ enum nft_rule_attributes {
+ /**
+  * enum nft_rule_compat_flags - nf_tables rule compat flags
+  *
++ * @NFT_RULE_COMPAT_F_UNUSED: unused
+  * @NFT_RULE_COMPAT_F_INV: invert the check result
+  */
+ enum nft_rule_compat_flags {
++	NFT_RULE_COMPAT_F_UNUSED = (1 << 0),
+ 	NFT_RULE_COMPAT_F_INV	= (1 << 1),
+ 	NFT_RULE_COMPAT_F_MASK	= NFT_RULE_COMPAT_F_INV,
+ };
+diff --git a/net/netfilter/nft_compat.c b/net/netfilter/nft_compat.c
+index 8281656808ae..8953e71dad78 100644
+--- a/net/netfilter/nft_compat.c
++++ b/net/netfilter/nft_compat.c
+@@ -226,7 +226,8 @@ static int nft_parse_compat(const struct nlattr *attr, u16 *proto, bool *inv)
+ 		return -EINVAL;
+ 
+ 	flags = ntohl(nla_get_be32(tb[NFTA_RULE_COMPAT_FLAGS]));
+-	if (flags & ~NFT_RULE_COMPAT_F_MASK)
++	if (flags & NFT_RULE_COMPAT_F_UNUSED ||
++	    flags & ~NFT_RULE_COMPAT_F_MASK)
+ 		return -EINVAL;
+ 	if (flags & NFT_RULE_COMPAT_F_INV)
+ 		*inv = true;
+-- 
+2.43.0
+
+
+From 4ca251ee2367db650f7420179d12a072b0d220ad Mon Sep 17 00:00:00 2001
+From: Pablo Neira Ayuso <pablo@netfilter.org>
+Date: Fri, 2 Feb 2024 00:05:23 +0100
+Subject: [PATCH 16/70] netfilter: nft_compat: restrict match/target protocol
+ to u16
+
+[ Upstream commit d694b754894c93fb4d71a7f3699439dec111decc ]
+
+xt_check_{match,target} expects u16, but NFTA_RULE_COMPAT_PROTO is u32.
+
+NLA_POLICY_MAX(NLA_BE32, 65535) cannot be used because .max in
+nla_policy is s16, see 3e48be05f3c7 ("netlink: add attribute range
+validation to policy").
+
+Fixes: 0ca743a55991 ("netfilter: nf_tables: add compatibility layer for x_tables")
+Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/netfilter/nft_compat.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/net/netfilter/nft_compat.c b/net/netfilter/nft_compat.c
+index 8953e71dad78..b87b7338266c 100644
+--- a/net/netfilter/nft_compat.c
++++ b/net/netfilter/nft_compat.c
+@@ -214,6 +214,7 @@ static const struct nla_policy nft_rule_compat_policy[NFTA_RULE_COMPAT_MAX + 1]
+ static int nft_parse_compat(const struct nlattr *attr, u16 *proto, bool *inv)
+ {
+ 	struct nlattr *tb[NFTA_RULE_COMPAT_MAX+1];
++	u32 l4proto;
+ 	u32 flags;
+ 	int err;
+ 
+@@ -232,7 +233,12 @@ static int nft_parse_compat(const struct nlattr *attr, u16 *proto, bool *inv)
+ 	if (flags & NFT_RULE_COMPAT_F_INV)
+ 		*inv = true;
+ 
+-	*proto = ntohl(nla_get_be32(tb[NFTA_RULE_COMPAT_PROTO]));
++	l4proto = ntohl(nla_get_be32(tb[NFTA_RULE_COMPAT_PROTO]));
++	if (l4proto > U16_MAX)
++		return -EINVAL;
++
++	*proto = l4proto;
++
+ 	return 0;
+ }
+ 
+-- 
+2.43.0
+
+
+From c2a86c3ee2377d53ba5c55923fda3f46feda35ac Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Tue, 12 Dec 2023 16:46:21 +0000
+Subject: [PATCH 17/70] net: prevent mss overflow in skb_segment()
+
+commit 23d05d563b7e7b0314e65c8e882bc27eac2da8e7 upstream.
+
+Once again syzbot is able to crash the kernel in skb_segment() [1]
+
+GSO_BY_FRAGS is a forbidden value, but unfortunately the following
+computation in skb_segment() can reach it quite easily :
+
+	mss = mss * partial_segs;
+
+65535 = 3 * 5 * 17 * 257, so many initial values of mss can lead to
+a bad final result.
+
+Make sure to limit segmentation so that the new mss value is smaller
+than GSO_BY_FRAGS.
+
+[1]
+
+general protection fault, probably for non-canonical address 0xdffffc000000000e: 0000 [#1] PREEMPT SMP KASAN
+KASAN: null-ptr-deref in range [0x0000000000000070-0x0000000000000077]
+CPU: 1 PID: 5079 Comm: syz-executor993 Not tainted 6.7.0-rc4-syzkaller-00141-g1ae4cd3cbdd0 #0
+Hardware name: Google Google Compute Engine/Google Compute Engine, BIOS Google 11/10/2023
+RIP: 0010:skb_segment+0x181d/0x3f30 net/core/skbuff.c:4551
+Code: 83 e3 02 e9 fb ed ff ff e8 90 68 1c f9 48 8b 84 24 f8 00 00 00 48 8d 78 70 48 b8 00 00 00 00 00 fc ff df 48 89 fa 48 c1 ea 03 <0f> b6 04 02 84 c0 74 08 3c 03 0f 8e 8a 21 00 00 48 8b 84 24 f8 00
+RSP: 0018:ffffc900043473d0 EFLAGS: 00010202
+RAX: dffffc0000000000 RBX: 0000000000010046 RCX: ffffffff886b1597
+RDX: 000000000000000e RSI: ffffffff886b2520 RDI: 0000000000000070
+RBP: ffffc90004347578 R08: 0000000000000005 R09: 000000000000ffff
+R10: 000000000000ffff R11: 0000000000000002 R12: ffff888063202ac0
+R13: 0000000000010000 R14: 000000000000ffff R15: 0000000000000046
+FS: 0000555556e7e380(0000) GS:ffff8880b9900000(0000) knlGS:0000000000000000
+CS: 0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+CR2: 0000000020010000 CR3: 0000000027ee2000 CR4: 00000000003506f0
+DR0: 0000000000000000 DR1: 0000000000000000 DR2: 0000000000000000
+DR3: 0000000000000000 DR6: 00000000fffe0ff0 DR7: 0000000000000400
+Call Trace:
+<TASK>
+udp6_ufo_fragment+0xa0e/0xd00 net/ipv6/udp_offload.c:109
+ipv6_gso_segment+0x534/0x17e0 net/ipv6/ip6_offload.c:120
+skb_mac_gso_segment+0x290/0x610 net/core/gso.c:53
+__skb_gso_segment+0x339/0x710 net/core/gso.c:124
+skb_gso_segment include/net/gso.h:83 [inline]
+validate_xmit_skb+0x36c/0xeb0 net/core/dev.c:3626
+__dev_queue_xmit+0x6f3/0x3d60 net/core/dev.c:4338
+dev_queue_xmit include/linux/netdevice.h:3134 [inline]
+packet_xmit+0x257/0x380 net/packet/af_packet.c:276
+packet_snd net/packet/af_packet.c:3087 [inline]
+packet_sendmsg+0x24c6/0x5220 net/packet/af_packet.c:3119
+sock_sendmsg_nosec net/socket.c:730 [inline]
+__sock_sendmsg+0xd5/0x180 net/socket.c:745
+__sys_sendto+0x255/0x340 net/socket.c:2190
+__do_sys_sendto net/socket.c:2202 [inline]
+__se_sys_sendto net/socket.c:2198 [inline]
+__x64_sys_sendto+0xe0/0x1b0 net/socket.c:2198
+do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+do_syscall_64+0x40/0x110 arch/x86/entry/common.c:83
+entry_SYSCALL_64_after_hwframe+0x63/0x6b
+RIP: 0033:0x7f8692032aa9
+Code: 28 00 00 00 75 05 48 83 c4 28 c3 e8 d1 19 00 00 90 48 89 f8 48 89 f7 48 89 d6 48 89 ca 4d 89 c2 4d 89 c8 4c 8b 4c 24 08 0f 05 <48> 3d 01 f0 ff ff 73 01 c3 48 c7 c1 b8 ff ff ff f7 d8 64 89 01 48
+RSP: 002b:00007fff8d685418 EFLAGS: 00000246 ORIG_RAX: 000000000000002c
+RAX: ffffffffffffffda RBX: 0000000000000003 RCX: 00007f8692032aa9
+RDX: 0000000000010048 RSI: 00000000200000c0 RDI: 0000000000000003
+RBP: 00000000000f4240 R08: 0000000020000540 R09: 0000000000000014
+R10: 0000000000000000 R11: 0000000000000246 R12: 00007fff8d685480
+R13: 0000000000000001 R14: 00007fff8d685480 R15: 0000000000000003
+</TASK>
+Modules linked in:
+---[ end trace 0000000000000000 ]---
+RIP: 0010:skb_segment+0x181d/0x3f30 net/core/skbuff.c:4551
+Code: 83 e3 02 e9 fb ed ff ff e8 90 68 1c f9 48 8b 84 24 f8 00 00 00 48 8d 78 70 48 b8 00 00 00 00 00 fc ff df 48 89 fa 48 c1 ea 03 <0f> b6 04 02 84 c0 74 08 3c 03 0f 8e 8a 21 00 00 48 8b 84 24 f8 00
+RSP: 0018:ffffc900043473d0 EFLAGS: 00010202
+RAX: dffffc0000000000 RBX: 0000000000010046 RCX: ffffffff886b1597
+RDX: 000000000000000e RSI: ffffffff886b2520 RDI: 0000000000000070
+RBP: ffffc90004347578 R08: 0000000000000005 R09: 000000000000ffff
+R10: 000000000000ffff R11: 0000000000000002 R12: ffff888063202ac0
+R13: 0000000000010000 R14: 000000000000ffff R15: 0000000000000046
+FS: 0000555556e7e380(0000) GS:ffff8880b9900000(0000) knlGS:0000000000000000
+CS: 0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+CR2: 0000000020010000 CR3: 0000000027ee2000 CR4: 00000000003506f0
+DR0: 0000000000000000 DR1: 0000000000000000 DR2: 0000000000000000
+DR3: 0000000000000000 DR6: 00000000fffe0ff0 DR7: 0000000000000400
+
+Fixes: 3953c46c3ac7 ("sk_buff: allow segmenting based on frag sizes")
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Marcelo Ricardo Leitner <marcelo.leitner@gmail.com>
+Reviewed-by: Willem de Bruijn <willemb@google.com>
+Link: https://lore.kernel.org/r/20231212164621.4131800-1-edumazet@google.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ net/core/skbuff.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 6e703d95c316..a3747058728a 100755
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -3749,8 +3749,9 @@ struct sk_buff *skb_segment(struct sk_buff *head_skb,
+ 		/* GSO partial only requires that we trim off any excess that
+ 		 * doesn't fit into an MSS sized block, so take care of that
+ 		 * now.
++		 * Cap len to not accidentally hit GSO_BY_FRAGS.
+ 		 */
+-		partial_segs = len / mss;
++		partial_segs = min(len, GSO_BY_FRAGS - 1U) / mss;
+ 		if (partial_segs > 1)
+ 			mss *= partial_segs;
+ 		else
+-- 
+2.43.0
+
+
+From a0238392dc17549d469e2832a6c2a0ab6414d54f Mon Sep 17 00:00:00 2001
+From: Johannes Berg <johannes.berg@intel.com>
+Date: Wed, 14 Feb 2024 20:08:35 +0100
+Subject: [PATCH 18/70] wifi: nl80211: reject iftype change with mesh ID change
+
+commit f78c1375339a291cba492a70eaf12ec501d28a8e upstream.
+
+It's currently possible to change the mesh ID when the
+interface isn't yet in mesh mode, at the same time as
+changing it into mesh mode. This leads to an overwrite
+of data in the wdev->u union for the interface type it
+currently has, causing cfg80211_change_iface() to do
+wrong things when switching.
+
+We could probably allow setting an interface to mesh
+while setting the mesh ID at the same time by doing a
+different order of operations here, but realistically
+there's no userspace that's going to do this, so just
+disallow changes in iftype when setting mesh ID.
+
+Cc: stable@vger.kernel.org
+Fixes: 29cbe68c516a ("cfg80211/mac80211: add mesh join/leave commands")
+Reported-by: syzbot+dd4779978217b1973180@syzkaller.appspotmail.com
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ net/wireless/nl80211.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index a6f60593297b..40380ad56421 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -2897,6 +2897,8 @@ static int nl80211_set_interface(struct sk_buff *skb, struct genl_info *info)
+ 
+ 		if (ntype != NL80211_IFTYPE_MESH_POINT)
+ 			return -EINVAL;
++		if (otype != NL80211_IFTYPE_MESH_POINT)
++			return -EINVAL;
+ 		if (netif_running(dev))
+ 			return -EBUSY;
+ 
+-- 
+2.43.0
+
+
+From 9cac9ab7d155e5894304f31832e6cac2d29c956a Mon Sep 17 00:00:00 2001
+From: Nikita Zhandarovich <n.zhandarovich@fintech.ru>
+Date: Fri, 19 Jan 2024 07:39:06 -0800
+Subject: [PATCH 19/70] do_sys_name_to_handle(): use kzalloc() to fix
+ kernel-infoleak
+
+[ Upstream commit 3948abaa4e2be938ccdfc289385a27342fb13d43 ]
+
+syzbot identified a kernel information leak vulnerability in
+do_sys_name_to_handle() and issued the following report [1].
+
+[1]
+"BUG: KMSAN: kernel-infoleak in instrument_copy_to_user include/linux/instrumented.h:114 [inline]
+BUG: KMSAN: kernel-infoleak in _copy_to_user+0xbc/0x100 lib/usercopy.c:40
+ instrument_copy_to_user include/linux/instrumented.h:114 [inline]
+ _copy_to_user+0xbc/0x100 lib/usercopy.c:40
+ copy_to_user include/linux/uaccess.h:191 [inline]
+ do_sys_name_to_handle fs/fhandle.c:73 [inline]
+ __do_sys_name_to_handle_at fs/fhandle.c:112 [inline]
+ __se_sys_name_to_handle_at+0x949/0xb10 fs/fhandle.c:94
+ __x64_sys_name_to_handle_at+0xe4/0x140 fs/fhandle.c:94
+ ...
+
+Uninit was created at:
+ slab_post_alloc_hook+0x129/0xa70 mm/slab.h:768
+ slab_alloc_node mm/slub.c:3478 [inline]
+ __kmem_cache_alloc_node+0x5c9/0x970 mm/slub.c:3517
+ __do_kmalloc_node mm/slab_common.c:1006 [inline]
+ __kmalloc+0x121/0x3c0 mm/slab_common.c:1020
+ kmalloc include/linux/slab.h:604 [inline]
+ do_sys_name_to_handle fs/fhandle.c:39 [inline]
+ __do_sys_name_to_handle_at fs/fhandle.c:112 [inline]
+ __se_sys_name_to_handle_at+0x441/0xb10 fs/fhandle.c:94
+ __x64_sys_name_to_handle_at+0xe4/0x140 fs/fhandle.c:94
+ ...
+
+Bytes 18-19 of 20 are uninitialized
+Memory access of size 20 starts at ffff888128a46380
+Data copied to user address 0000000020000240"
+
+Per Chuck Lever's suggestion, use kzalloc() instead of kmalloc() to
+solve the problem.
+
+Fixes: 990d6c2d7aee ("vfs: Add name to file handle conversion support")
+Suggested-by: Chuck Lever III <chuck.lever@oracle.com>
+Reported-and-tested-by: <syzbot+09b349b3066c2e0b1e96@syzkaller.appspotmail.com>
+Signed-off-by: Nikita Zhandarovich <n.zhandarovich@fintech.ru>
+Link: https://lore.kernel.org/r/20240119153906.4367-1-n.zhandarovich@fintech.ru
+Reviewed-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Christian Brauner <brauner@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ fs/fhandle.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/fs/fhandle.c b/fs/fhandle.c
+index 474adc8d2a3a..3f6149998782 100644
+--- a/fs/fhandle.c
++++ b/fs/fhandle.c
+@@ -37,7 +37,7 @@ static long do_sys_name_to_handle(struct path *path,
+ 	if (f_handle.handle_bytes > MAX_HANDLE_SZ)
+ 		return -EINVAL;
+ 
+-	handle = kmalloc(sizeof(struct file_handle) + f_handle.handle_bytes,
++	handle = kzalloc(sizeof(struct file_handle) + f_handle.handle_bytes,
+ 			 GFP_KERNEL);
+ 	if (!handle)
+ 		return -ENOMEM;
+-- 
+2.43.0
+
+
+From 87a97135b3de0c9a85c2ba879db9dbbd0daebfe8 Mon Sep 17 00:00:00 2001
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Mon, 11 Mar 2024 15:06:39 +0100
+Subject: [PATCH 20/70] dm: call the resume method on internal suspend
+
+[ Upstream commit 65e8fbde64520001abf1c8d0e573561b4746ef38 ]
+
+There is this reported crash when experimenting with the lvm2 testsuite.
+The list corruption is caused by the fact that the postsuspend and resume
+methods were not paired correctly; there were two consecutive calls to the
+origin_postsuspend function. The second call attempts to remove the
+"hash_list" entry from a list, while it was already removed by the first
+call.
+
+Fix __dm_internal_resume so that it calls the preresume and resume
+methods of the table's targets.
+
+If a preresume method of some target fails, we are in a tricky situation.
+We can't return an error because dm_internal_resume isn't supposed to
+return errors. We can't return success, because then the "resume" and
+"postsuspend" methods would not be paired correctly. So, we set the
+DMF_SUSPENDED flag and we fake normal suspend - it may confuse userspace
+tools, but it won't cause a kernel crash.
+
+------------[ cut here ]------------
+kernel BUG at lib/list_debug.c:56!
+invalid opcode: 0000 [#1] PREEMPT SMP
+CPU: 1 PID: 8343 Comm: dmsetup Not tainted 6.8.0-rc6 #4
+Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.14.0-2 04/01/2014
+RIP: 0010:__list_del_entry_valid_or_report+0x77/0xc0
+<snip>
+RSP: 0018:ffff8881b831bcc0 EFLAGS: 00010282
+RAX: 000000000000004e RBX: ffff888143b6eb80 RCX: 0000000000000000
+RDX: 0000000000000001 RSI: ffffffff819053d0 RDI: 00000000ffffffff
+RBP: ffff8881b83a3400 R08: 00000000fffeffff R09: 0000000000000058
+R10: 0000000000000000 R11: ffffffff81a24080 R12: 0000000000000001
+R13: ffff88814538e000 R14: ffff888143bc6dc0 R15: ffffffffa02e4bb0
+FS:  00000000f7c0f780(0000) GS:ffff8893f0a40000(0000) knlGS:0000000000000000
+CS:  0010 DS: 002b ES: 002b CR0: 0000000080050033
+CR2: 0000000057fb5000 CR3: 0000000143474000 CR4: 00000000000006b0
+Call Trace:
+ <TASK>
+ ? die+0x2d/0x80
+ ? do_trap+0xeb/0xf0
+ ? __list_del_entry_valid_or_report+0x77/0xc0
+ ? do_error_trap+0x60/0x80
+ ? __list_del_entry_valid_or_report+0x77/0xc0
+ ? exc_invalid_op+0x49/0x60
+ ? __list_del_entry_valid_or_report+0x77/0xc0
+ ? asm_exc_invalid_op+0x16/0x20
+ ? table_deps+0x1b0/0x1b0 [dm_mod]
+ ? __list_del_entry_valid_or_report+0x77/0xc0
+ origin_postsuspend+0x1a/0x50 [dm_snapshot]
+ dm_table_postsuspend_targets+0x34/0x50 [dm_mod]
+ dm_suspend+0xd8/0xf0 [dm_mod]
+ dev_suspend+0x1f2/0x2f0 [dm_mod]
+ ? table_deps+0x1b0/0x1b0 [dm_mod]
+ ctl_ioctl+0x300/0x5f0 [dm_mod]
+ dm_compat_ctl_ioctl+0x7/0x10 [dm_mod]
+ __x64_compat_sys_ioctl+0x104/0x170
+ do_syscall_64+0x184/0x1b0
+ entry_SYSCALL_64_after_hwframe+0x46/0x4e
+RIP: 0033:0xf7e6aead
+<snip>
+---[ end trace 0000000000000000 ]---
+
+Fixes: ffcc39364160 ("dm: enhance internal suspend and resume interface")
+Signed-off-by: Mikulas Patocka <mpatocka@redhat.com>
+Signed-off-by: Mike Snitzer <snitzer@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/md/dm.c | 26 ++++++++++++++++++++------
+ 1 file changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/md/dm.c b/drivers/md/dm.c
+index ed850e46c810..d4a0655ab684 100644
+--- a/drivers/md/dm.c
++++ b/drivers/md/dm.c
+@@ -2781,6 +2781,9 @@ static void __dm_internal_suspend(struct mapped_device *md, unsigned suspend_fla
+ 
+ static void __dm_internal_resume(struct mapped_device *md)
+ {
++	int r;
++	struct dm_table *map;
++
+ 	BUG_ON(!md->internal_suspend_count);
+ 
+ 	if (--md->internal_suspend_count)
+@@ -2789,12 +2792,23 @@ static void __dm_internal_resume(struct mapped_device *md)
+ 	if (dm_suspended_md(md))
+ 		goto done; /* resume from nested suspend */
+ 
+-	/*
+-	 * NOTE: existing callers don't need to call dm_table_resume_targets
+-	 * (which may fail -- so best to avoid it for now by passing NULL map)
+-	 */
+-	(void) __dm_resume(md, NULL);
+-
++	map = rcu_dereference_protected(md->map, lockdep_is_held(&md->suspend_lock));
++	r = __dm_resume(md, map);
++	if (r) {
++		/*
++		 * If a preresume method of some target failed, we are in a
++		 * tricky situation. We can't return an error to the caller. We
++		 * can't fake success because then the "resume" and
++		 * "postsuspend" methods would not be paired correctly, and it
++		 * would break various targets, for example it would cause list
++		 * corruption in the "origin" target.
++		 *
++		 * So, we fake normal suspend here, to make sure that the
++		 * "resume" and "postsuspend" methods will be paired correctly.
++		 */
++		DMERR("Preresume method failed: %d", r);
++		set_bit(DMF_SUSPENDED, &md->flags);
++	}
+ done:
+ 	clear_bit(DMF_SUSPENDED_INTERNALLY, &md->flags);
+ 	smp_mb__after_atomic();
+-- 
+2.43.0
+
+
+From 01f9a190a83585bd8808967fb4927387a97e7e57 Mon Sep 17 00:00:00 2001
+From: Peter Griffin <peter.griffin@linaro.org>
+Date: Tue, 20 Feb 2024 11:50:10 +0000
+Subject: [PATCH 21/70] mfd: syscon: Call of_node_put() only when
+ of_parse_phandle() takes a ref
+
+[ Upstream commit d2b0680cf3b05490b579e71b0df6e07451977745 ]
+
+of_parse_phandle() returns a device_node with refcount incremented, which
+the callee needs to call of_node_put() on when done. We should only call
+of_node_put() when the property argument is provided though as otherwise
+nothing has taken a reference on the node.
+
+Fixes: 45330bb43421 ("mfd: syscon: Allow property as NULL in syscon_regmap_lookup_by_phandle")
+Signed-off-by: Peter Griffin <peter.griffin@linaro.org>
+Link: https://lore.kernel.org/r/20240220115012.471689-2-peter.griffin@linaro.org
+Signed-off-by: Lee Jones <lee@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/mfd/syscon.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mfd/syscon.c b/drivers/mfd/syscon.c
+index b93fe4c4957a..3a4ba3bd44c6 100644
+--- a/drivers/mfd/syscon.c
++++ b/drivers/mfd/syscon.c
+@@ -190,7 +190,9 @@ struct regmap *syscon_regmap_lookup_by_phandle(struct device_node *np,
+ 		return ERR_PTR(-ENODEV);
+ 
+ 	regmap = syscon_node_to_regmap(syscon_np);
+-	of_node_put(syscon_np);
++
++	if (property)
++		of_node_put(syscon_np);
+ 
+ 	return regmap;
+ }
+-- 
+2.43.0
+
+
+From 6dd1fcdf979dba70882ec8381da9c936c97df2a4 Mon Sep 17 00:00:00 2001
+From: Fei Shao <fshao@chromium.org>
+Date: Thu, 21 Mar 2024 15:08:57 +0800
+Subject: [PATCH 22/70] spi: spi-mt65xx: Fix NULL pointer access in interrupt
+ handler
+
+[ Upstream commit a20ad45008a7c82f1184dc6dee280096009ece55 ]
+
+The TX buffer in spi_transfer can be a NULL pointer, so the interrupt
+handler may end up writing to the invalid memory and cause crashes.
+
+Add a check to trans->tx_buf before using it.
+
+Fixes: 1ce24864bff4 ("spi: mediatek: Only do dma for 4-byte aligned buffers")
+Signed-off-by: Fei Shao <fshao@chromium.org>
+Reviewed-by: AngeloGioacchino Del Regno <angelogioacchino.delregno@collabora.com>
+Link: https://msgid.link/r/20240321070942.1587146-2-fshao@chromium.org
+Signed-off-by: Mark Brown <broonie@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/spi/spi-mt65xx.c | 22 ++++++++++++----------
+ 1 file changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/spi/spi-mt65xx.c b/drivers/spi/spi-mt65xx.c
+index 26ee52555fc3..86caa6806804 100644
+--- a/drivers/spi/spi-mt65xx.c
++++ b/drivers/spi/spi-mt65xx.c
+@@ -713,17 +713,19 @@ static irqreturn_t mtk_spi_interrupt(int irq, void *dev_id)
+ 		mdata->xfer_len = min(MTK_SPI_MAX_FIFO_SIZE, len);
+ 		mtk_spi_setup_packet(master);
+ 
+-		cnt = mdata->xfer_len / 4;
+-		iowrite32_rep(mdata->base + SPI_TX_DATA_REG,
+-				trans->tx_buf + mdata->num_xfered, cnt);
++		if (trans->tx_buf) {
++			cnt = mdata->xfer_len / 4;
++			iowrite32_rep(mdata->base + SPI_TX_DATA_REG,
++					trans->tx_buf + mdata->num_xfered, cnt);
+ 
+-		remainder = mdata->xfer_len % 4;
+-		if (remainder > 0) {
+-			reg_val = 0;
+-			memcpy(&reg_val,
+-				trans->tx_buf + (cnt * 4) + mdata->num_xfered,
+-				remainder);
+-			writel(reg_val, mdata->base + SPI_TX_DATA_REG);
++			remainder = mdata->xfer_len % 4;
++			if (remainder > 0) {
++				reg_val = 0;
++				memcpy(&reg_val,
++					trans->tx_buf + (cnt * 4) + mdata->num_xfered,
++					remainder);
++				writel(reg_val, mdata->base + SPI_TX_DATA_REG);
++			}
+ 		}
+ 
+ 		mtk_spi_enable_transfer(master);
+-- 
+2.43.0
+
+
+From e74f91b3f3054f64b949d0db6dd4e76e452ead9a Mon Sep 17 00:00:00 2001
+From: Jan Kara <jack@suse.cz>
+Date: Mon, 5 Feb 2024 13:26:26 +0100
+Subject: [PATCH 23/70] fat: fix uninitialized field in nostale filehandles
+
+[ Upstream commit fde2497d2bc3a063d8af88b258dbadc86bd7b57c ]
+
+When fat_encode_fh_nostale() encodes file handle without a parent it
+stores only first 10 bytes of the file handle. However the length of the
+file handle must be a multiple of 4 so the file handle is actually 12
+bytes long and the last two bytes remain uninitialized. This is not
+great at we potentially leak uninitialized information with the handle
+to userspace. Properly initialize the full handle length.
+
+Link: https://lkml.kernel.org/r/20240205122626.13701-1-jack@suse.cz
+Reported-by: syzbot+3ce5dea5b1539ff36769@syzkaller.appspotmail.com
+Fixes: ea3983ace6b7 ("fat: restructure export_operations")
+Signed-off-by: Jan Kara <jack@suse.cz>
+Acked-by: OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
+Cc: Amir Goldstein <amir73il@gmail.com>
+Cc: <stable@vger.kernel.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ fs/fat/nfs.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/fs/fat/nfs.c b/fs/fat/nfs.c
+index eb192656fba2..f442a8d2f114 100644
+--- a/fs/fat/nfs.c
++++ b/fs/fat/nfs.c
+@@ -139,6 +139,12 @@ fat_encode_fh_nostale(struct inode *inode, __u32 *fh, int *lenp,
+ 		fid->parent_i_gen = parent->i_generation;
+ 		type = FILEID_FAT_WITH_PARENT;
+ 		*lenp = FAT_FID_SIZE_WITH_PARENT;
++	} else {
++		/*
++		 * We need to initialize this field because the fh is actually
++		 * 12 bytes long
++		 */
++		fid->parent_i_pos_hi = 0;
+ 	}
+ 
+ 	return type;
+-- 
+2.43.0
+
+
+From 194044d39835c39b3045f9abb92eb81cfc8b0d5a Mon Sep 17 00:00:00 2001
+From: Pablo Neira Ayuso <pablo@netfilter.org>
+Date: Fri, 1 Mar 2024 00:11:10 +0100
+Subject: [PATCH 24/70] netfilter: nf_tables: disallow anonymous set with
+ timeout flag
+
+commit 16603605b667b70da974bea8216c93e7db043bf1 upstream.
+
+Anonymous sets are never used with timeout from userspace, reject this.
+Exception to this rule is NFT_SET_EVAL to ensure legacy meters still work.
+
+Cc: stable@vger.kernel.org
+Fixes: 761da2935d6e ("netfilter: nf_tables: add set timeout API support")
+Reported-by: lonial con <kongln9170@gmail.com>
+Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ net/netfilter/nf_tables_api.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/net/netfilter/nf_tables_api.c b/net/netfilter/nf_tables_api.c
+index 6686156d74ba..97abf261aa70 100644
+--- a/net/netfilter/nf_tables_api.c
++++ b/net/netfilter/nf_tables_api.c
+@@ -3170,6 +3170,9 @@ static int nf_tables_newset(struct net *net, struct sock *nlsk,
+ 		if ((flags & (NFT_SET_EVAL | NFT_SET_OBJECT)) ==
+ 			     (NFT_SET_EVAL | NFT_SET_OBJECT))
+ 			return -EOPNOTSUPP;
++		if ((flags & (NFT_SET_ANONYMOUS | NFT_SET_TIMEOUT | NFT_SET_EVAL)) ==
++			     (NFT_SET_ANONYMOUS | NFT_SET_TIMEOUT))
++			return -EOPNOTSUPP;
+ 	}
+ 
+ 	dtype = 0;
+-- 
+2.43.0
+
+
+From 08115f1d53d3db1655d9203fcd298231a03a3ca8 Mon Sep 17 00:00:00 2001
+From: Alan Stern <stern@rowland.harvard.edu>
+Date: Thu, 29 Feb 2024 14:30:06 -0500
+Subject: [PATCH 25/70] USB: usb-storage: Prevent divide-by-0 error in
+ isd200_ata_command
+
+commit 014bcf41d946b36a8f0b8e9b5d9529efbb822f49 upstream.
+
+The isd200 sub-driver in usb-storage uses the HEADS and SECTORS values
+in the ATA ID information to calculate cylinder and head values when
+creating a CDB for READ or WRITE commands.  The calculation involves
+division and modulus operations, which will cause a crash if either of
+these values is 0.  While this never happens with a genuine device, it
+could happen with a flawed or subversive emulation, as reported by the
+syzbot fuzzer.
+
+Protect against this possibility by refusing to bind to the device if
+either the ATA_ID_HEADS or ATA_ID_SECTORS value in the device's ID
+information is 0.  This requires isd200_Initialization() to return a
+negative error code when initialization fails; currently it always
+returns 0 (even when there is an error).
+
+Signed-off-by: Alan Stern <stern@rowland.harvard.edu>
+Reported-and-tested-by: syzbot+28748250ab47a8f04100@syzkaller.appspotmail.com
+Link: https://lore.kernel.org/linux-usb/0000000000003eb868061245ba7f@google.com/
+Fixes: 1da177e4c3f4 ("Linux-2.6.12-rc2")
+Cc: stable@vger.kernel.org
+Reviewed-by: PrasannaKumar Muralidharan <prasannatsmkumar@gmail.com>
+Reviewed-by: Martin K. Petersen <martin.petersen@oracle.com>
+Link: https://lore.kernel.org/r/b1e605ea-333f-4ac0-9511-da04f411763e@rowland.harvard.edu
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ drivers/usb/storage/isd200.c | 23 ++++++++++++++++++-----
+ 1 file changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/storage/isd200.c b/drivers/usb/storage/isd200.c
+index 6a7720e66595..671104bfdef0 100644
+--- a/drivers/usb/storage/isd200.c
++++ b/drivers/usb/storage/isd200.c
+@@ -1117,7 +1117,7 @@ static void isd200_dump_driveid(struct us_data *us, u16 *id)
+ static int isd200_get_inquiry_data( struct us_data *us )
+ {
+ 	struct isd200_info *info = (struct isd200_info *)us->extra;
+-	int retStatus = ISD200_GOOD;
++	int retStatus;
+ 	u16 *id = info->id;
+ 
+ 	usb_stor_dbg(us, "Entering isd200_get_inquiry_data\n");
+@@ -1149,6 +1149,13 @@ static int isd200_get_inquiry_data( struct us_data *us )
+ 				isd200_fix_driveid(id);
+ 				isd200_dump_driveid(us, id);
+ 
++				/* Prevent division by 0 in isd200_scsi_to_ata() */
++				if (id[ATA_ID_HEADS] == 0 || id[ATA_ID_SECTORS] == 0) {
++					usb_stor_dbg(us, "   Invalid ATA Identify data\n");
++					retStatus = ISD200_ERROR;
++					goto Done;
++				}
++
+ 				memset(&info->InquiryData, 0, sizeof(info->InquiryData));
+ 
+ 				/* Standard IDE interface only supports disks */
+@@ -1214,6 +1221,7 @@ static int isd200_get_inquiry_data( struct us_data *us )
+ 		}
+ 	}
+ 
++ Done:
+ 	usb_stor_dbg(us, "Leaving isd200_get_inquiry_data %08X\n", retStatus);
+ 
+ 	return(retStatus);
+@@ -1493,22 +1501,27 @@ static int isd200_init_info(struct us_data *us)
+ 
+ static int isd200_Initialization(struct us_data *us)
+ {
++	int rc = 0;
++
+ 	usb_stor_dbg(us, "ISD200 Initialization...\n");
+ 
+ 	/* Initialize ISD200 info struct */
+ 
+-	if (isd200_init_info(us) == ISD200_ERROR) {
++	if (isd200_init_info(us) < 0) {
+ 		usb_stor_dbg(us, "ERROR Initializing ISD200 Info struct\n");
++		rc = -ENOMEM;
+ 	} else {
+ 		/* Get device specific data */
+ 
+-		if (isd200_get_inquiry_data(us) != ISD200_GOOD)
++		if (isd200_get_inquiry_data(us) != ISD200_GOOD) {
+ 			usb_stor_dbg(us, "ISD200 Initialization Failure\n");
+-		else
++			rc = -EINVAL;
++		} else {
+ 			usb_stor_dbg(us, "ISD200 Initialization complete\n");
++		}
+ 	}
+ 
+-	return 0;
++	return rc;
+ }
+ 
+ 
+-- 
+2.43.0
+
+
+From 4d9a3a644bfb54b4ffa7a41302dfdbed1201dcbc Mon Sep 17 00:00:00 2001
+From: Zi Yan <ziy@nvidia.com>
+Date: Wed, 6 Mar 2024 10:51:13 -0500
+Subject: [PATCH 26/70] mm/migrate: set swap entry values of THP tail pages
+ properly.
+
+The tail pages in a THP can have swap entry information stored in their
+private field. When migrating to a new page, all tail pages of the new
+page need to update ->private to avoid future data corruption.
+
+This fix is stable-only, since after commit 07e09c483cbe ("mm/huge_memory:
+work on folio->swap instead of page->private when splitting folio"),
+subpages of a swapcached THP no longer requires the maintenance.
+
+Adding THPs to the swapcache was introduced in commit
+38d8b4e6bdc87 ("mm, THP, swap: delay splitting THP during swap out"),
+where each subpage of a THP added to the swapcache had its own swapcache
+entry and required the ->private field to point to the correct swapcache
+entry. Later, when THP migration functionality was implemented in commit
+616b8371539a6 ("mm: thp: enable thp migration in generic path"),
+it initially did not handle the subpages of swapcached THPs, failing to
+update their ->private fields or replace the subpage pointers in the
+swapcache. Subsequently, commit e71769ae5260 ("mm: enable thp migration
+for shmem thp") addressed the swapcache update aspect. This patch fixes
+the update of subpage ->private fields.
+
+Closes: https://lore.kernel.org/linux-mm/1707814102-22682-1-git-send-email-quic_charante@quicinc.com/
+Fixes: 616b8371539a ("mm: thp: enable thp migration in generic path")
+Signed-off-by: Zi Yan <ziy@nvidia.com>
+Acked-by: David Hildenbrand <david@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ mm/migrate.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/mm/migrate.c b/mm/migrate.c
+index 8d2401e6a7fd..a817f710e80a 100644
+--- a/mm/migrate.c
++++ b/mm/migrate.c
+@@ -508,8 +508,12 @@ int migrate_page_move_mapping(struct address_space *mapping,
+ 	if (PageSwapBacked(page)) {
+ 		__SetPageSwapBacked(newpage);
+ 		if (PageSwapCache(page)) {
++			int i;
++
+ 			SetPageSwapCache(newpage);
+-			set_page_private(newpage, page_private(page));
++			for (i = 0; i < (1 << compound_order(page)); i++)
++				set_page_private(newpage + i,
++						 page_private(page + i));
+ 		}
+ 	} else {
+ 		VM_BUG_ON_PAGE(PageSwapCache(page), page);
+-- 
+2.43.0
+
+
+From d3d5146fedfee732b1cb63235aa657d014bcbed8 Mon Sep 17 00:00:00 2001
+From: David Bauer <mail@david-bauer.net>
+Date: Thu, 18 Apr 2024 15:29:08 +0200
+Subject: [PATCH 27/70] vxlan: drop packets from invalid src-address
+
+[ Upstream commit f58f45c1e5b92975e91754f5407250085a6ae7cf ]
+
+The VXLAN driver currently does not check if the inner layer2
+source-address is valid.
+
+In case source-address snooping/learning is enabled, a entry in the FDB
+for the invalid address is created with the layer3 address of the tunnel
+endpoint.
+
+If the frame happens to have a non-unicast address set, all this
+non-unicast traffic is subsequently not flooded to the tunnel network
+but sent to the learnt host in the FDB. To make matters worse, this FDB
+entry does not expire.
+
+Apply the same filtering for packets as it is done for bridges. This not
+only drops these invalid packets but avoids them from being learnt into
+the FDB.
+
+Fixes: d342894c5d2f ("vxlan: virtual extensible lan")
+Suggested-by: Ido Schimmel <idosch@nvidia.com>
+Signed-off-by: David Bauer <mail@david-bauer.net>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/net/vxlan.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/net/vxlan.c b/drivers/net/vxlan.c
+index b44077ba82ef..d3136793f8a3 100644
+--- a/drivers/net/vxlan.c
++++ b/drivers/net/vxlan.c
+@@ -1324,6 +1324,10 @@ static bool vxlan_set_mac(struct vxlan_dev *vxlan,
+ 	if (ether_addr_equal(eth_hdr(skb)->h_source, vxlan->dev->dev_addr))
+ 		return false;
+ 
++	/* Ignore packets from invalid src-address */
++	if (!is_valid_ether_addr(eth_hdr(skb)->h_source))
++		return false;
++
+ 	/* Get address from the outer IP header */
+ 	if (vxlan_get_sk_family(vs) == AF_INET) {
+ 		saddr.sin.sin_addr.s_addr = ip_hdr(skb)->saddr;
+-- 
+2.43.0
+
+
+From fc0f8b589ebdb42fca8807b79d33420d86c6587c Mon Sep 17 00:00:00 2001
+From: Ismael Luceno <iluceno@suse.de>
+Date: Sun, 21 Apr 2024 16:22:32 +0200
+Subject: [PATCH 28/70] ipvs: Fix checksumming on GSO of SCTP packets
+
+[ Upstream commit e10d3ba4d434ed172914617ed8d74bd411421193 ]
+
+It was observed in the wild that pairs of consecutive packets would leave
+the IPVS with the same wrong checksum, and the issue only went away when
+disabling GSO.
+
+IPVS needs to avoid computing the SCTP checksum when using GSO.
+
+Fixes: 90017accff61 ("sctp: Add GSO support")
+Co-developed-by: Firo Yang <firo.yang@suse.com>
+Signed-off-by: Ismael Luceno <iluceno@suse.de>
+Tested-by: Andreas Taschner <andreas.taschner@suse.com>
+Acked-by: Julian Anastasov <ja@ssi.bg>
+Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/netfilter/ipvs/ip_vs_proto_sctp.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/net/netfilter/ipvs/ip_vs_proto_sctp.c b/net/netfilter/ipvs/ip_vs_proto_sctp.c
+index eff7569824e5..aaf04e47e06a 100644
+--- a/net/netfilter/ipvs/ip_vs_proto_sctp.c
++++ b/net/netfilter/ipvs/ip_vs_proto_sctp.c
+@@ -123,7 +123,8 @@ sctp_snat_handler(struct sk_buff *skb, struct ip_vs_protocol *pp,
+ 	if (sctph->source != cp->vport || payload_csum ||
+ 	    skb->ip_summed == CHECKSUM_PARTIAL) {
+ 		sctph->source = cp->vport;
+-		sctp_nat_csum(skb, sctph, sctphoff);
++		if (!skb_is_gso(skb) || !skb_is_gso_sctp(skb))
++			sctp_nat_csum(skb, sctph, sctphoff);
+ 	} else {
+ 		skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 	}
+@@ -171,7 +172,8 @@ sctp_dnat_handler(struct sk_buff *skb, struct ip_vs_protocol *pp,
+ 	    (skb->ip_summed == CHECKSUM_PARTIAL &&
+ 	     !(skb_dst(skb)->dev->features & NETIF_F_SCTP_CRC))) {
+ 		sctph->dest = cp->dport;
+-		sctp_nat_csum(skb, sctph, sctphoff);
++		if (!skb_is_gso(skb) || !skb_is_gso_sctp(skb))
++			sctp_nat_csum(skb, sctph, sctphoff);
+ 	} else if (skb->ip_summed != CHECKSUM_PARTIAL) {
+ 		skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 	}
+-- 
+2.43.0
+
+
+From c1192dcca76c3f51821984d98a8a50ba487b777b Mon Sep 17 00:00:00 2001
+From: Dan Carpenter <dan.carpenter@linaro.org>
+Date: Thu, 21 Mar 2024 09:38:39 +0300
+Subject: [PATCH 29/70] pinctrl: core: delete incorrect free in
+ pinctrl_enable()
+
+[ Upstream commit 5038a66dad0199de60e5671603ea6623eb9e5c79 ]
+
+The "pctldev" struct is allocated in devm_pinctrl_register_and_init().
+It's a devm_ managed pointer that is freed by devm_pinctrl_dev_release(),
+so freeing it in pinctrl_enable() will lead to a double free.
+
+The devm_pinctrl_dev_release() function frees the pindescs and destroys
+the mutex as well.
+
+Fixes: 6118714275f0 ("pinctrl: core: Fix pinctrl_register_and_init() with pinctrl_enable()")
+Signed-off-by: Dan Carpenter <dan.carpenter@linaro.org>
+Message-ID: <578fbe56-44e9-487c-ae95-29b695650f7c@moroto.mountain>
+Signed-off-by: Linus Walleij <linus.walleij@linaro.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/pinctrl/core.c | 8 +-------
+ 1 file changed, 1 insertion(+), 7 deletions(-)
+
+diff --git a/drivers/pinctrl/core.c b/drivers/pinctrl/core.c
+index 7069f5d65199..ee2666d87287 100644
+--- a/drivers/pinctrl/core.c
++++ b/drivers/pinctrl/core.c
+@@ -2059,13 +2059,7 @@ int pinctrl_enable(struct pinctrl_dev *pctldev)
+ 
+ 	error = pinctrl_claim_hogs(pctldev);
+ 	if (error) {
+-		dev_err(pctldev->dev, "could not claim hogs: %i\n",
+-			error);
+-		pinctrl_free_pindescs(pctldev, pctldev->desc->pins,
+-				      pctldev->desc->npins);
+-		mutex_destroy(&pctldev->mutex);
+-		kfree(pctldev);
+-
++		dev_err(pctldev->dev, "could not claim hogs: %i\n", error);
+ 		return error;
+ 	}
+ 
+-- 
+2.43.0
+
+
+From 521de6cf1e18e08b0aa599ce62823727e97dba82 Mon Sep 17 00:00:00 2001
+From: Roded Zats <rzats@paloaltonetworks.com>
+Date: Thu, 2 May 2024 18:57:51 +0300
+Subject: [PATCH 30/70] rtnetlink: Correct nested IFLA_VF_VLAN_LIST attribute
+ validation
+
+[ Upstream commit 1aec77b2bb2ed1db0f5efc61c4c1ca3813307489 ]
+
+Each attribute inside a nested IFLA_VF_VLAN_LIST is assumed to be a
+struct ifla_vf_vlan_info so the size of such attribute needs to be at least
+of sizeof(struct ifla_vf_vlan_info) which is 14 bytes.
+The current size validation in do_setvfinfo is against NLA_HDRLEN (4 bytes)
+which is less than sizeof(struct ifla_vf_vlan_info) so this validation
+is not enough and a too small attribute might be cast to a
+struct ifla_vf_vlan_info, this might result in an out of bands
+read access when accessing the saved (casted) entry in ivvl.
+
+Fixes: 79aab093a0b5 ("net: Update API for VF vlan protocol 802.1ad support")
+Signed-off-by: Roded Zats <rzats@paloaltonetworks.com>
+Reviewed-by: Donald Hunter <donald.hunter@gmail.com>
+Link: https://lore.kernel.org/r/20240502155751.75705-1-rzats@paloaltonetworks.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/core/rtnetlink.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/net/core/rtnetlink.c b/net/core/rtnetlink.c
+index c69b9fc12666..565ff1144bb3 100644
+--- a/net/core/rtnetlink.c
++++ b/net/core/rtnetlink.c
+@@ -1950,7 +1950,7 @@ static int do_setvfinfo(struct net_device *dev, struct nlattr **tb)
+ 
+ 		nla_for_each_nested(attr, tb[IFLA_VF_VLAN_LIST], rem) {
+ 			if (nla_type(attr) != IFLA_VF_VLAN_INFO ||
+-			    nla_len(attr) < NLA_HDRLEN) {
++			    nla_len(attr) < sizeof(struct ifla_vf_vlan_info)) {
+ 				return -EINVAL;
+ 			}
+ 			if (len >= MAX_VLAN_LIST_LEN)
+-- 
+2.43.0
+
+
+From c91c5a6babf106af64b192ba13f72936882addab Mon Sep 17 00:00:00 2001
+From: Breno Leitao <leitao@debian.org>
+Date: Thu, 9 May 2024 01:14:46 -0700
+Subject: [PATCH 31/70] af_unix: Fix data races in
+ unix_release_sock/unix_stream_sendmsg
+
+[ Upstream commit 540bf24fba16b88c1b3b9353927204b4f1074e25 ]
+
+A data-race condition has been identified in af_unix. In one data path,
+the write function unix_release_sock() atomically writes to
+sk->sk_shutdown using WRITE_ONCE. However, on the reader side,
+unix_stream_sendmsg() does not read it atomically. Consequently, this
+issue is causing the following KCSAN splat to occur:
+
+	BUG: KCSAN: data-race in unix_release_sock / unix_stream_sendmsg
+
+	write (marked) to 0xffff88867256ddbb of 1 bytes by task 7270 on cpu 28:
+	unix_release_sock (net/unix/af_unix.c:640)
+	unix_release (net/unix/af_unix.c:1050)
+	sock_close (net/socket.c:659 net/socket.c:1421)
+	__fput (fs/file_table.c:422)
+	__fput_sync (fs/file_table.c:508)
+	__se_sys_close (fs/open.c:1559 fs/open.c:1541)
+	__x64_sys_close (fs/open.c:1541)
+	x64_sys_call (arch/x86/entry/syscall_64.c:33)
+	do_syscall_64 (arch/x86/entry/common.c:?)
+	entry_SYSCALL_64_after_hwframe (arch/x86/entry/entry_64.S:130)
+
+	read to 0xffff88867256ddbb of 1 bytes by task 989 on cpu 14:
+	unix_stream_sendmsg (net/unix/af_unix.c:2273)
+	__sock_sendmsg (net/socket.c:730 net/socket.c:745)
+	____sys_sendmsg (net/socket.c:2584)
+	__sys_sendmmsg (net/socket.c:2638 net/socket.c:2724)
+	__x64_sys_sendmmsg (net/socket.c:2753 net/socket.c:2750 net/socket.c:2750)
+	x64_sys_call (arch/x86/entry/syscall_64.c:33)
+	do_syscall_64 (arch/x86/entry/common.c:?)
+	entry_SYSCALL_64_after_hwframe (arch/x86/entry/entry_64.S:130)
+
+	value changed: 0x01 -> 0x03
+
+The line numbers are related to commit dd5a440a31fa ("Linux 6.9-rc7").
+
+Commit e1d09c2c2f57 ("af_unix: Fix data races around sk->sk_shutdown.")
+addressed a comparable issue in the past regarding sk->sk_shutdown.
+However, it overlooked resolving this particular data path.
+This patch only offending unix_stream_sendmsg() function, since the
+other reads seem to be protected by unix_state_lock() as discussed in
+Link: https://lore.kernel.org/all/20240508173324.53565-1-kuniyu@amazon.com/
+
+Fixes: 1da177e4c3f4 ("Linux-2.6.12-rc2")
+Signed-off-by: Breno Leitao <leitao@debian.org>
+Reviewed-by: Kuniyuki Iwashima <kuniyu@amazon.com>
+Link: https://lore.kernel.org/r/20240509081459.2807828-1-leitao@debian.org
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/unix/af_unix.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/net/unix/af_unix.c b/net/unix/af_unix.c
+index 8d25d50f916e..2a91a69f664e 100644
+--- a/net/unix/af_unix.c
++++ b/net/unix/af_unix.c
+@@ -1901,7 +1901,7 @@ static int unix_stream_sendmsg(struct socket *sock, struct msghdr *msg,
+ 			goto out_err;
+ 	}
+ 
+-	if (sk->sk_shutdown & SEND_SHUTDOWN)
++	if (READ_ONCE(sk->sk_shutdown) & SEND_SHUTDOWN)
+ 		goto pipe_err;
+ 
+ 	while (sent < len) {
+-- 
+2.43.0
+
+
+From 72be7778d35a15ea74c303a2404fabb0c03a62f4 Mon Sep 17 00:00:00 2001
+From: Hangbin Liu <liuhangbin@gmail.com>
+Date: Thu, 9 May 2024 21:18:12 +0800
+Subject: [PATCH 32/70] ipv6: sr: fix invalid unregister error path
+
+[ Upstream commit 160e9d2752181fcf18c662e74022d77d3164cd45 ]
+
+The error path of seg6_init() is wrong in case CONFIG_IPV6_SEG6_LWTUNNEL
+is not defined. In that case if seg6_hmac_init() fails, the
+genl_unregister_family() isn't called.
+
+This issue exist since commit 46738b1317e1 ("ipv6: sr: add option to control
+lwtunnel support"), and commit 5559cea2d5aa ("ipv6: sr: fix possible
+use-after-free and null-ptr-deref") replaced unregister_pernet_subsys()
+with genl_unregister_family() in this error path.
+
+Fixes: 46738b1317e1 ("ipv6: sr: add option to control lwtunnel support")
+Reported-by: Guillaume Nault <gnault@redhat.com>
+Signed-off-by: Hangbin Liu <liuhangbin@gmail.com>
+Reviewed-by: Sabrina Dubroca <sd@queasysnail.net>
+Reviewed-by: David Ahern <dsahern@kernel.org>
+Link: https://lore.kernel.org/r/20240509131812.1662197-4-liuhangbin@gmail.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/ipv6/seg6.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/net/ipv6/seg6.c b/net/ipv6/seg6.c
+index 12ceda19eb47..620782d8932e 100644
+--- a/net/ipv6/seg6.c
++++ b/net/ipv6/seg6.c
+@@ -496,6 +496,8 @@ int __init seg6_init(void)
+ #endif
+ #ifdef CONFIG_IPV6_SEG6_LWTUNNEL
+ out_unregister_genl:
++#endif
++#if IS_ENABLED(CONFIG_IPV6_SEG6_LWTUNNEL) || IS_ENABLED(CONFIG_IPV6_SEG6_HMAC)
+ 	genl_unregister_family(&seg6_genl_family);
+ #endif
+ out_unregister_pernet:
+-- 
+2.43.0
+
+
+From e812e99439eb96fa5b082fee654ac0d2aa6521d7 Mon Sep 17 00:00:00 2001
+From: Jan Kara <jack@suse.cz>
+Date: Thu, 7 Mar 2024 12:53:20 +0100
+Subject: [PATCH 33/70] ext4: avoid excessive credit estimate in ext4_tmpfile()
+
+[ Upstream commit 35a1f12f0ca857fee1d7a04ef52cbd5f1f84de13 ]
+
+A user with minimum journal size (1024 blocks these days) complained
+about the following error triggered by generic/697 test in
+ext4_tmpfile():
+
+run fstests generic/697 at 2024-02-28 05:34:46
+JBD2: vfstest wants too many credits credits:260 rsv_credits:0 max:256
+EXT4-fs error (device loop0) in __ext4_new_inode:1083: error 28
+
+Indeed the credit estimate in ext4_tmpfile() is huge.
+EXT4_MAXQUOTAS_INIT_BLOCKS() is 219, then 10 credits from ext4_tmpfile()
+itself and then ext4_xattr_credits_for_new_inode() adds more credits
+needed for security attributes and ACLs. Now the
+EXT4_MAXQUOTAS_INIT_BLOCKS() is in fact unnecessary because we've
+already initialized quotas with dquot_init() shortly before and so
+EXT4_MAXQUOTAS_TRANS_BLOCKS() is enough (which boils down to 3 credits).
+
+Fixes: af51a2ac36d1 ("ext4: ->tmpfile() support")
+Signed-off-by: Jan Kara <jack@suse.cz>
+Tested-by: Luis Henriques <lhenriques@suse.de>
+Tested-by: Disha Goel <disgoel@linux.ibm.com>
+Link: https://lore.kernel.org/r/20240307115320.28949-1-jack@suse.cz
+Signed-off-by: Theodore Ts'o <tytso@mit.edu>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ fs/ext4/namei.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/fs/ext4/namei.c b/fs/ext4/namei.c
+index 247c235a3302..ab249837d1ca 100755
+--- a/fs/ext4/namei.c
++++ b/fs/ext4/namei.c
+@@ -2828,7 +2828,7 @@ static int ext4_tmpfile(struct inode *dir, struct dentry *dentry, umode_t mode)
+ 	inode = ext4_new_inode_start_handle(dir, mode,
+ 					    NULL, 0, NULL,
+ 					    EXT4_HT_DIR,
+-			EXT4_MAXQUOTAS_INIT_BLOCKS(dir->i_sb) +
++			EXT4_MAXQUOTAS_TRANS_BLOCKS(dir->i_sb) +
+ 			  4 + EXT4_XATTR_TRANS_BLOCKS);
+ 	handle = ext4_journal_current_handle();
+ 	err = PTR_ERR(inode);
+-- 
+2.43.0
+
+
+From 30b12976ae821187ddc94e6159bab06f2fbc92a2 Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Fri, 31 May 2024 13:26:34 +0000
+Subject: [PATCH 34/70] ipv6: sr: block BH in seg6_output_core() and
+ seg6_input_core()
+
+[ Upstream commit c0b98ac1cc104f48763cdb27b1e9ac25fd81fc90 ]
+
+As explained in commit 1378817486d6 ("tipc: block BH
+before using dst_cache"), net/core/dst_cache.c
+helpers need to be called with BH disabled.
+
+Disabling preemption in seg6_output_core() is not good enough,
+because seg6_output_core() is called from process context,
+lwtunnel_output() only uses rcu_read_lock().
+
+We might be interrupted by a softirq, re-enter seg6_output_core()
+and corrupt dst_cache data structures.
+
+Fix the race by using local_bh_disable() instead of
+preempt_disable().
+
+Apply a similar change in seg6_input_core().
+
+Fixes: fa79581ea66c ("ipv6: sr: fix several BUGs when preemption is enabled")
+Fixes: 6c8702c60b88 ("ipv6: sr: add support for SRH encapsulation and injection with lwtunnels")
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: David Lebrun <dlebrun@google.com>
+Acked-by: Paolo Abeni <pabeni@redhat.com>
+Link: https://lore.kernel.org/r/20240531132636.2637995-4-edumazet@google.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/ipv6/seg6_iptunnel.c | 14 ++++++--------
+ 1 file changed, 6 insertions(+), 8 deletions(-)
+
+diff --git a/net/ipv6/seg6_iptunnel.c b/net/ipv6/seg6_iptunnel.c
+index 059977157909..18dbadd122a3 100644
+--- a/net/ipv6/seg6_iptunnel.c
++++ b/net/ipv6/seg6_iptunnel.c
+@@ -293,9 +293,8 @@ static int seg6_input(struct sk_buff *skb)
+ 
+ 	slwt = seg6_lwt_lwtunnel(orig_dst->lwtstate);
+ 
+-	preempt_disable();
++	local_bh_disable();
+ 	dst = dst_cache_get(&slwt->cache);
+-	preempt_enable();
+ 
+ 	skb_dst_drop(skb);
+ 
+@@ -303,14 +302,13 @@ static int seg6_input(struct sk_buff *skb)
+ 		ip6_route_input(skb);
+ 		dst = skb_dst(skb);
+ 		if (!dst->error) {
+-			preempt_disable();
+ 			dst_cache_set_ip6(&slwt->cache, dst,
+ 					  &ipv6_hdr(skb)->saddr);
+-			preempt_enable();
+ 		}
+ 	} else {
+ 		skb_dst_set(skb, dst);
+ 	}
++	local_bh_enable();
+ 
+ 	err = skb_cow_head(skb, LL_RESERVED_SPACE(dst->dev));
+ 	if (unlikely(err))
+@@ -332,9 +330,9 @@ static int seg6_output(struct net *net, struct sock *sk, struct sk_buff *skb)
+ 
+ 	slwt = seg6_lwt_lwtunnel(orig_dst->lwtstate);
+ 
+-	preempt_disable();
++	local_bh_disable();
+ 	dst = dst_cache_get(&slwt->cache);
+-	preempt_enable();
++	local_bh_enable();
+ 
+ 	if (unlikely(!dst)) {
+ 		struct ipv6hdr *hdr = ipv6_hdr(skb);
+@@ -354,9 +352,9 @@ static int seg6_output(struct net *net, struct sock *sk, struct sk_buff *skb)
+ 			goto drop;
+ 		}
+ 
+-		preempt_disable();
++		local_bh_disable();
+ 		dst_cache_set_ip6(&slwt->cache, dst, &fl6.saddr);
+-		preempt_enable();
++		local_bh_enable();
+ 	}
+ 
+ 	skb_dst_drop(skb);
+-- 
+2.43.0
+
+
+From b051f8630c142a280fe2c61a9102eef0a221ca9c Mon Sep 17 00:00:00 2001
+From: Wesley Cheng <quic_wcheng@quicinc.com>
+Date: Mon, 8 Apr 2024 18:40:59 -0700
+Subject: [PATCH 35/70] usb: gadget: f_fs: Fix race between aio_cancel() and
+ AIO request complete
+
+[ Upstream commit 24729b307eefcd7c476065cd7351c1a018082c19 ]
+
+FFS based applications can utilize the aio_cancel() callback to dequeue
+pending USB requests submitted to the UDC.  There is a scenario where the
+FFS application issues an AIO cancel call, while the UDC is handling a
+soft disconnect.  For a DWC3 based implementation, the callstack looks
+like the following:
+
+    DWC3 Gadget                               FFS Application
+dwc3_gadget_soft_disconnect()              ...
+  --> dwc3_stop_active_transfers()
+    --> dwc3_gadget_giveback(-ESHUTDOWN)
+      --> ffs_epfile_async_io_complete()   ffs_aio_cancel()
+        --> usb_ep_free_request()            --> usb_ep_dequeue()
+
+There is currently no locking implemented between the AIO completion
+handler and AIO cancel, so the issue occurs if the completion routine is
+running in parallel to an AIO cancel call coming from the FFS application.
+As the completion call frees the USB request (io_data->req) the FFS
+application is also referencing it for the usb_ep_dequeue() call.  This can
+lead to accessing a stale/hanging pointer.
+
+commit b566d38857fc ("usb: gadget: f_fs: use io_data->status consistently")
+relocated the usb_ep_free_request() into ffs_epfile_async_io_complete().
+However, in order to properly implement locking to mitigate this issue, the
+spinlock can't be added to ffs_epfile_async_io_complete(), as
+usb_ep_dequeue() (if successfully dequeuing a USB request) will call the
+function driver's completion handler in the same context.  Hence, leading
+into a deadlock.
+
+Fix this issue by moving the usb_ep_free_request() back to
+ffs_user_copy_worker(), and ensuring that it explicitly sets io_data->req
+to NULL after freeing it within the ffs->eps_lock.  This resolves the race
+condition above, as the ffs_aio_cancel() routine will not continue
+attempting to dequeue a request that has already been freed, or the
+ffs_user_copy_work() not freeing the USB request until the AIO cancel is
+done referencing it.
+
+This fix depends on
+  commit b566d38857fc ("usb: gadget: f_fs: use io_data->status
+  consistently")
+
+Fixes: 2e4c7553cd6f ("usb: gadget: f_fs: add aio support")
+Cc: stable <stable@kernel.org>	# b566d38857fc ("usb: gadget: f_fs: use io_data->status consistently")
+Signed-off-by: Wesley Cheng <quic_wcheng@quicinc.com>
+Link: https://lore.kernel.org/r/20240409014059.6740-1-quic_wcheng@quicinc.com
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/usb/gadget/function/f_fs.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/usb/gadget/function/f_fs.c b/drivers/usb/gadget/function/f_fs.c
+index 20f7afc67ff4..736fd2e568bb 100644
+--- a/drivers/usb/gadget/function/f_fs.c
++++ b/drivers/usb/gadget/function/f_fs.c
+@@ -772,6 +772,7 @@ static void ffs_user_copy_worker(struct work_struct *work)
+ 	int ret = io_data->req->status ? io_data->req->status :
+ 					 io_data->req->actual;
+ 	bool kiocb_has_eventfd = io_data->kiocb->ki_flags & IOCB_EVENTFD;
++	unsigned long flags;
+ 
+ 	if (io_data->read && ret > 0) {
+ 		mm_segment_t oldfs = get_fs();
+@@ -788,7 +789,10 @@ static void ffs_user_copy_worker(struct work_struct *work)
+ 	if (io_data->ffs->ffs_eventfd && !kiocb_has_eventfd)
+ 		eventfd_signal(io_data->ffs->ffs_eventfd, 1);
+ 
++	spin_lock_irqsave(&io_data->ffs->eps_lock, flags);
+ 	usb_ep_free_request(io_data->ep, io_data->req);
++	io_data->req = NULL;
++	spin_unlock_irqrestore(&io_data->ffs->eps_lock, flags);
+ 
+ 	if (io_data->read)
+ 		kfree(io_data->to_free);
+-- 
+2.43.0
+
+
+From 4876bafff0984283890bf6df7fb70389da4604d5 Mon Sep 17 00:00:00 2001
+From: Dirk Behme <dirk.behme@de.bosch.com>
+Date: Mon, 13 May 2024 07:06:34 +0200
+Subject: [PATCH 36/70] drivers: core: synchronize really_probe() and
+ dev_uevent()
+
+commit c0a40097f0bc81deafc15f9195d1fb54595cd6d0 upstream.
+
+Synchronize the dev->driver usage in really_probe() and dev_uevent().
+These can run in different threads, what can result in the following
+race condition for dev->driver uninitialization:
+
+Thread #1:
+==========
+
+really_probe() {
+...
+probe_failed:
+...
+device_unbind_cleanup(dev) {
+    ...
+    dev->driver = NULL;   // <= Failed probe sets dev->driver to NULL
+    ...
+    }
+...
+}
+
+Thread #2:
+==========
+
+dev_uevent() {
+...
+if (dev->driver)
+      // If dev->driver is NULLed from really_probe() from here on,
+      // after above check, the system crashes
+      add_uevent_var(env, "DRIVER=%s", dev->driver->name);
+...
+}
+
+really_probe() holds the lock, already. So nothing needs to be done
+there. dev_uevent() is called with lock held, often, too. But not
+always. What implies that we can't add any locking in dev_uevent()
+itself. So fix this race by adding the lock to the non-protected
+path. This is the path where above race is observed:
+
+ dev_uevent+0x235/0x380
+ uevent_show+0x10c/0x1f0  <= Add lock here
+ dev_attr_show+0x3a/0xa0
+ sysfs_kf_seq_show+0x17c/0x250
+ kernfs_seq_show+0x7c/0x90
+ seq_read_iter+0x2d7/0x940
+ kernfs_fop_read_iter+0xc6/0x310
+ vfs_read+0x5bc/0x6b0
+ ksys_read+0xeb/0x1b0
+ __x64_sys_read+0x42/0x50
+ x64_sys_call+0x27ad/0x2d30
+ do_syscall_64+0xcd/0x1d0
+ entry_SYSCALL_64_after_hwframe+0x77/0x7f
+
+Similar cases are reported by syzkaller in
+
+https://syzkaller.appspot.com/bug?extid=ffa8143439596313a85a
+
+But these are regarding the *initialization* of dev->driver
+
+dev->driver = drv;
+
+As this switches dev->driver to non-NULL these reports can be considered
+to be false-positives (which should be "fixed" by this commit, as well,
+though).
+
+The same issue was reported and tried to be fixed back in 2015 in
+
+https://lore.kernel.org/lkml/1421259054-2574-1-git-send-email-a.sangwan@samsung.com/
+
+already.
+
+Fixes: 239378f16aa1 ("Driver core: add uevent vars for devices of a class")
+Cc: stable <stable@kernel.org>
+Cc: syzbot+ffa8143439596313a85a@syzkaller.appspotmail.com
+Cc: Ashish Sangwan <a.sangwan@samsung.com>
+Cc: Namjae Jeon <namjae.jeon@samsung.com>
+Signed-off-by: Dirk Behme <dirk.behme@de.bosch.com>
+Link: https://lore.kernel.org/r/20240513050634.3964461-1-dirk.behme@de.bosch.com
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ drivers/base/core.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/base/core.c b/drivers/base/core.c
+index e834087448a4..b420352af986 100644
+--- a/drivers/base/core.c
++++ b/drivers/base/core.c
+@@ -999,8 +999,11 @@ static ssize_t uevent_show(struct device *dev, struct device_attribute *attr,
+ 	if (!env)
+ 		return -ENOMEM;
+ 
++	/* Synchronize with really_probe() */
++	device_lock(dev);
+ 	/* let the kset specific function add its keys */
+ 	retval = kset->uevent_ops->uevent(kset, &dev->kobj, env);
++	device_unlock(dev);
+ 	if (retval)
+ 		goto out;
+ 
+-- 
+2.43.0
+
+
+From 0c066f0a6c2be1a1dc3329827bfd5dcd05cc7e8a Mon Sep 17 00:00:00 2001
+From: Shichao Lai <shichaorai@gmail.com>
+Date: Sun, 26 May 2024 09:27:45 +0800
+Subject: [PATCH 37/70] usb-storage: alauda: Check whether the media is
+ initialized
+
+[ Upstream commit 16637fea001ab3c8df528a8995b3211906165a30 ]
+
+The member "uzonesize" of struct alauda_info will remain 0
+if alauda_init_media() fails, potentially causing divide errors
+in alauda_read_data() and alauda_write_lba().
+- Add a member "media_initialized" to struct alauda_info.
+- Change a condition in alauda_check_media() to ensure the
+  first initialization.
+- Add an error check for the return value of alauda_init_media().
+
+Fixes: e80b0fade09e ("[PATCH] USB Storage: add alauda support")
+Reported-by: xingwei lee <xrivendell7@gmail.com>
+Reported-by: yue sun <samsun1006219@gmail.com>
+Reviewed-by: Alan Stern <stern@rowland.harvard.edu>
+Signed-off-by: Shichao Lai <shichaorai@gmail.com>
+Link: https://lore.kernel.org/r/20240526012745.2852061-1-shichaorai@gmail.com
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/usb/storage/alauda.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/storage/alauda.c b/drivers/usb/storage/alauda.c
+index 263847bf1fe5..e181dbe88f85 100644
+--- a/drivers/usb/storage/alauda.c
++++ b/drivers/usb/storage/alauda.c
+@@ -117,6 +117,8 @@ struct alauda_info {
+ 	unsigned char sense_key;
+ 	unsigned long sense_asc;	/* additional sense code */
+ 	unsigned long sense_ascq;	/* additional sense code qualifier */
++
++	bool media_initialized;
+ };
+ 
+ #define short_pack(lsb,msb) ( ((u16)(lsb)) | ( ((u16)(msb))<<8 ) )
+@@ -488,11 +490,12 @@ static int alauda_check_media(struct us_data *us)
+ 	}
+ 
+ 	/* Check for media change */
+-	if (status[0] & 0x08) {
++	if (status[0] & 0x08 || !info->media_initialized) {
+ 		usb_stor_dbg(us, "Media change detected\n");
+ 		alauda_free_maps(&MEDIA_INFO(us));
+-		alauda_init_media(us);
+-
++		rc = alauda_init_media(us);
++		if (rc == USB_STOR_TRANSPORT_GOOD)
++			info->media_initialized = true;
+ 		info->sense_key = UNIT_ATTENTION;
+ 		info->sense_asc = 0x28;
+ 		info->sense_ascq = 0x00;
+-- 
+2.43.0
+
+
+From cbdcb39ed547531b8d1fc21ce7b1caf997da2078 Mon Sep 17 00:00:00 2001
+From: Ondrej Mosnacek <omosnace@redhat.com>
+Date: Fri, 7 Jun 2024 18:07:52 +0200
+Subject: [PATCH 38/70] cipso: fix total option length computation
+
+[ Upstream commit 9f36169912331fa035d7b73a91252d7c2512eb1a ]
+
+As evident from the definition of ip_options_get(), the IP option
+IPOPT_END is used to pad the IP option data array, not IPOPT_NOP. Yet
+the loop that walks the IP options to determine the total IP options
+length in cipso_v4_delopt() doesn't take IPOPT_END into account.
+
+Fix it by recognizing the IPOPT_END value as the end of actual options.
+
+Fixes: 014ab19a69c3 ("selinux: Set socket NetLabel based on connection endpoint")
+Signed-off-by: Ondrej Mosnacek <omosnace@redhat.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/ipv4/cipso_ipv4.c | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/net/ipv4/cipso_ipv4.c b/net/ipv4/cipso_ipv4.c
+index 8dcf9aec7b77..4a86cf05a348 100644
+--- a/net/ipv4/cipso_ipv4.c
++++ b/net/ipv4/cipso_ipv4.c
+@@ -2029,12 +2029,16 @@ static int cipso_v4_delopt(struct ip_options_rcu __rcu **opt_ptr)
+ 		 * from there we can determine the new total option length */
+ 		iter = 0;
+ 		optlen_new = 0;
+-		while (iter < opt->opt.optlen)
+-			if (opt->opt.__data[iter] != IPOPT_NOP) {
++		while (iter < opt->opt.optlen) {
++			if (opt->opt.__data[iter] == IPOPT_END) {
++				break;
++			} else if (opt->opt.__data[iter] == IPOPT_NOP) {
++				iter++;
++			} else {
+ 				iter += opt->opt.__data[iter + 1];
+ 				optlen_new = iter;
+-			} else
+-				iter++;
++			}
++		}
+ 		hdr_delta = opt->opt.optlen;
+ 		opt->opt.optlen = (optlen_new + 3) & ~3;
+ 		hdr_delta -= opt->opt.optlen;
+-- 
+2.43.0
+
+
+From ce1464c09ab452beed455a41a21a89f3925fab0f Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Sat, 15 Jun 2024 15:42:31 +0000
+Subject: [PATCH 39/70] xfrm6: check ip6_dst_idev() return value in
+ xfrm6_get_saddr()
+
+[ Upstream commit d46401052c2d5614da8efea5788532f0401cb164 ]
+
+ip6_dst_idev() can return NULL, xfrm6_get_saddr() must act accordingly.
+
+syzbot reported:
+
+Oops: general protection fault, probably for non-canonical address 0xdffffc0000000000: 0000 [#1] PREEMPT SMP KASAN PTI
+KASAN: null-ptr-deref in range [0x0000000000000000-0x0000000000000007]
+CPU: 1 PID: 12 Comm: kworker/u8:1 Not tainted 6.10.0-rc2-syzkaller-00383-gb8481381d4e2 #0
+Hardware name: Google Google Compute Engine/Google Compute Engine, BIOS Google 04/02/2024
+Workqueue: wg-kex-wg1 wg_packet_handshake_send_worker
+ RIP: 0010:xfrm6_get_saddr+0x93/0x130 net/ipv6/xfrm6_policy.c:64
+Code: df 48 89 fa 48 c1 ea 03 80 3c 02 00 0f 85 97 00 00 00 4c 8b ab d8 00 00 00 48 b8 00 00 00 00 00 fc ff df 4c 89 ea 48 c1 ea 03 <80> 3c 02 00 0f 85 86 00 00 00 4d 8b 6d 00 e8 ca 13 47 01 48 b8 00
+RSP: 0018:ffffc90000117378 EFLAGS: 00010246
+RAX: dffffc0000000000 RBX: ffff88807b079dc0 RCX: ffffffff89a0d6d7
+RDX: 0000000000000000 RSI: ffffffff89a0d6e9 RDI: ffff88807b079e98
+RBP: ffff88807ad73248 R08: 0000000000000007 R09: fffffffffffff000
+R10: ffff88807b079dc0 R11: 0000000000000007 R12: ffffc90000117480
+R13: 0000000000000000 R14: 0000000000000000 R15: 0000000000000000
+FS:  0000000000000000(0000) GS:ffff8880b9300000(0000) knlGS:0000000000000000
+CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+CR2: 00007f4586d00440 CR3: 0000000079042000 CR4: 00000000003506f0
+DR0: 0000000000000000 DR1: 0000000000000000 DR2: 0000000000000000
+DR3: 0000000000000000 DR6: 00000000fffe0ff0 DR7: 0000000000000400
+Call Trace:
+ <TASK>
+  xfrm_get_saddr net/xfrm/xfrm_policy.c:2452 [inline]
+  xfrm_tmpl_resolve_one net/xfrm/xfrm_policy.c:2481 [inline]
+  xfrm_tmpl_resolve+0xa26/0xf10 net/xfrm/xfrm_policy.c:2541
+  xfrm_resolve_and_create_bundle+0x140/0x2570 net/xfrm/xfrm_policy.c:2835
+  xfrm_bundle_lookup net/xfrm/xfrm_policy.c:3070 [inline]
+  xfrm_lookup_with_ifid+0x4d1/0x1e60 net/xfrm/xfrm_policy.c:3201
+  xfrm_lookup net/xfrm/xfrm_policy.c:3298 [inline]
+  xfrm_lookup_route+0x3b/0x200 net/xfrm/xfrm_policy.c:3309
+  ip6_dst_lookup_flow+0x15c/0x1d0 net/ipv6/ip6_output.c:1256
+  send6+0x611/0xd20 drivers/net/wireguard/socket.c:139
+  wg_socket_send_skb_to_peer+0xf9/0x220 drivers/net/wireguard/socket.c:178
+  wg_socket_send_buffer_to_peer+0x12b/0x190 drivers/net/wireguard/socket.c:200
+  wg_packet_send_handshake_initiation+0x227/0x360 drivers/net/wireguard/send.c:40
+  wg_packet_handshake_send_worker+0x1c/0x30 drivers/net/wireguard/send.c:51
+  process_one_work+0x9fb/0x1b60 kernel/workqueue.c:3231
+  process_scheduled_works kernel/workqueue.c:3312 [inline]
+  worker_thread+0x6c8/0xf70 kernel/workqueue.c:3393
+  kthread+0x2c1/0x3a0 kernel/kthread.c:389
+  ret_from_fork+0x45/0x80 arch/x86/kernel/process.c:147
+  ret_from_fork_asm+0x1a/0x30 arch/x86/entry/entry_64.S:244
+
+Fixes: 1da177e4c3f4 ("Linux-2.6.12-rc2")
+Reported-by: syzbot <syzkaller@googlegroups.com>
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Reviewed-by: David Ahern <dsahern@kernel.org>
+Link: https://lore.kernel.org/r/20240615154231.234442-1-edumazet@google.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/ipv6/xfrm6_policy.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/net/ipv6/xfrm6_policy.c b/net/ipv6/xfrm6_policy.c
+index 487f83e8a62d..58a6fd3b826a 100644
+--- a/net/ipv6/xfrm6_policy.c
++++ b/net/ipv6/xfrm6_policy.c
+@@ -60,12 +60,18 @@ static int xfrm6_get_saddr(struct net *net, int oif,
+ {
+ 	struct dst_entry *dst;
+ 	struct net_device *dev;
++	struct inet6_dev *idev;
+ 
+ 	dst = xfrm6_dst_lookup(net, 0, oif, NULL, daddr, mark);
+ 	if (IS_ERR(dst))
+ 		return -EHOSTUNREACH;
+ 
+-	dev = ip6_dst_idev(dst)->dev;
++	idev = ip6_dst_idev(dst);
++	if (!idev) {
++		dst_release(dst);
++		return -EHOSTUNREACH;
++	}
++	dev = idev->dev;
+ 	ipv6_dev_get_saddr(dev_net(dev), dev, &daddr->in6, 0, &saddr->in6);
+ 	dst_release(dst);
+ 	return 0;
+-- 
+2.43.0
+
+
+From f04f50b384a3298cf2345e9a0e1f7c722725e2e2 Mon Sep 17 00:00:00 2001
+From: Hagar Hemdan <hagarhem@amazon.com>
+Date: Tue, 4 Jun 2024 08:58:38 +0000
+Subject: [PATCH 40/70] pinctrl: fix deadlock in create_pinctrl() when handling
+ -EPROBE_DEFER
+
+[ Upstream commit adec57ff8e66aee632f3dd1f93787c13d112b7a1 ]
+
+In create_pinctrl(), pinctrl_maps_mutex is acquired before calling
+add_setting(). If add_setting() returns -EPROBE_DEFER, create_pinctrl()
+calls pinctrl_free(). However, pinctrl_free() attempts to acquire
+pinctrl_maps_mutex, which is already held by create_pinctrl(), leading to
+a potential deadlock.
+
+This patch resolves the issue by releasing pinctrl_maps_mutex before
+calling pinctrl_free(), preventing the deadlock.
+
+This bug was discovered and resolved using Coverity Static Analysis
+Security Testing (SAST) by Synopsys, Inc.
+
+Fixes: 42fed7ba44e4 ("pinctrl: move subsystem mutex to pinctrl_dev struct")
+Suggested-by: Maximilian Heyne <mheyne@amazon.de>
+Signed-off-by: Hagar Hemdan <hagarhem@amazon.com>
+Link: https://lore.kernel.org/r/20240604085838.3344-1-hagarhem@amazon.com
+Signed-off-by: Linus Walleij <linus.walleij@linaro.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/pinctrl/core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/pinctrl/core.c b/drivers/pinctrl/core.c
+index ee2666d87287..5a6e23c74c22 100644
+--- a/drivers/pinctrl/core.c
++++ b/drivers/pinctrl/core.c
+@@ -1050,8 +1050,8 @@ static struct pinctrl *create_pinctrl(struct device *dev,
+ 		 * an -EPROBE_DEFER later, as that is the worst case.
+ 		 */
+ 		if (ret == -EPROBE_DEFER) {
+-			pinctrl_free(p, false);
+ 			mutex_unlock(&pinctrl_maps_mutex);
++			pinctrl_free(p, false);
+ 			return ERR_PTR(ret);
+ 		}
+ 	}
+-- 
+2.43.0
+
+
+From 0ccc4267a3cfc91f4df8abdf8a5a4709c1d4c5f5 Mon Sep 17 00:00:00 2001
+From: Jakub Kicinski <kuba@kernel.org>
+Date: Thu, 27 Jun 2024 14:25:00 -0700
+Subject: [PATCH 41/70] tcp_metrics: validate source addr length
+
+[ Upstream commit 66be40e622e177316ae81717aa30057ba9e61dff ]
+
+I don't see anything checking that TCP_METRICS_ATTR_SADDR_IPV4
+is at least 4 bytes long, and the policy doesn't have an entry
+for this attribute at all (neither does it for IPv6 but v6 is
+manually validated).
+
+Reviewed-by: Eric Dumazet <edumazet@google.com>
+Fixes: 3e7013ddf55a ("tcp: metrics: Allow selective get/del of tcp-metrics based on src IP")
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/ipv4/tcp_metrics.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/net/ipv4/tcp_metrics.c b/net/ipv4/tcp_metrics.c
+index 7b3cb290eb7a..178ab3918f8d 100644
+--- a/net/ipv4/tcp_metrics.c
++++ b/net/ipv4/tcp_metrics.c
+@@ -617,6 +617,7 @@ static const struct nla_policy tcp_metrics_nl_policy[TCP_METRICS_ATTR_MAX + 1] =
+ 	[TCP_METRICS_ATTR_ADDR_IPV4]	= { .type = NLA_U32, },
+ 	[TCP_METRICS_ATTR_ADDR_IPV6]	= { .type = NLA_BINARY,
+ 					    .len = sizeof(struct in6_addr), },
++	[TCP_METRICS_ATTR_SADDR_IPV4]	= { .type = NLA_U32, },
+ 	/* Following attributes are not received for GET/DEL,
+ 	 * we keep them for reference
+ 	 */
+-- 
+2.43.0
+
+
+From bf1cb9a1e4bf842140e7febc9dfe40e11dfab0a5 Mon Sep 17 00:00:00 2001
+From: Sam Sun <samsun1006219@gmail.com>
+Date: Tue, 2 Jul 2024 14:55:55 +0100
+Subject: [PATCH 42/70] bonding: Fix out-of-bounds read in
+ bond_option_arp_ip_targets_set()
+
+[ Upstream commit e271ff53807e8f2c628758290f0e499dbe51cb3d ]
+
+In function bond_option_arp_ip_targets_set(), if newval->string is an
+empty string, newval->string+1 will point to the byte after the
+string, causing an out-of-bound read.
+
+BUG: KASAN: slab-out-of-bounds in strlen+0x7d/0xa0 lib/string.c:418
+Read of size 1 at addr ffff8881119c4781 by task syz-executor665/8107
+CPU: 1 PID: 8107 Comm: syz-executor665 Not tainted 6.7.0-rc7 #1
+Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.15.0-1 04/01/2014
+Call Trace:
+ <TASK>
+ __dump_stack lib/dump_stack.c:88 [inline]
+ dump_stack_lvl+0xd9/0x150 lib/dump_stack.c:106
+ print_address_description mm/kasan/report.c:364 [inline]
+ print_report+0xc1/0x5e0 mm/kasan/report.c:475
+ kasan_report+0xbe/0xf0 mm/kasan/report.c:588
+ strlen+0x7d/0xa0 lib/string.c:418
+ __fortify_strlen include/linux/fortify-string.h:210 [inline]
+ in4_pton+0xa3/0x3f0 net/core/utils.c:130
+ bond_option_arp_ip_targets_set+0xc2/0x910
+drivers/net/bonding/bond_options.c:1201
+ __bond_opt_set+0x2a4/0x1030 drivers/net/bonding/bond_options.c:767
+ __bond_opt_set_notify+0x48/0x150 drivers/net/bonding/bond_options.c:792
+ bond_opt_tryset_rtnl+0xda/0x160 drivers/net/bonding/bond_options.c:817
+ bonding_sysfs_store_option+0xa1/0x120 drivers/net/bonding/bond_sysfs.c:156
+ dev_attr_store+0x54/0x80 drivers/base/core.c:2366
+ sysfs_kf_write+0x114/0x170 fs/sysfs/file.c:136
+ kernfs_fop_write_iter+0x337/0x500 fs/kernfs/file.c:334
+ call_write_iter include/linux/fs.h:2020 [inline]
+ new_sync_write fs/read_write.c:491 [inline]
+ vfs_write+0x96a/0xd80 fs/read_write.c:584
+ ksys_write+0x122/0x250 fs/read_write.c:637
+ do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+ do_syscall_64+0x40/0x110 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x63/0x6b
+---[ end trace ]---
+
+Fix it by adding a check of string length before using it.
+
+Fixes: f9de11a16594 ("bonding: add ip checks when store ip target")
+Signed-off-by: Yue Sun <samsun1006219@gmail.com>
+Signed-off-by: Simon Horman <horms@kernel.org>
+Acked-by: Jay Vosburgh <jay.vosburgh@canonical.com>
+Reviewed-by: Hangbin Liu <liuhangbin@gmail.com>
+Link: https://patch.msgid.link/20240702-bond-oob-v6-1-2dfdba195c19@kernel.org
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/net/bonding/bond_options.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/bonding/bond_options.c b/drivers/net/bonding/bond_options.c
+index 1e81b1cafae3..d7dbbe356ab7 100644
+--- a/drivers/net/bonding/bond_options.c
++++ b/drivers/net/bonding/bond_options.c
+@@ -1074,9 +1074,9 @@ static int bond_option_arp_ip_targets_set(struct bonding *bond,
+ 	__be32 target;
+ 
+ 	if (newval->string) {
+-		if (!in4_pton(newval->string+1, -1, (u8 *)&target, -1, NULL)) {
+-			netdev_err(bond->dev, "invalid ARP target %pI4 specified\n",
+-				   &target);
++		if (strlen(newval->string) < 1 ||
++		    !in4_pton(newval->string + 1, -1, (u8 *)&target, -1, NULL)) {
++			netdev_err(bond->dev, "invalid ARP target specified\n");
+ 			return ret;
+ 		}
+ 		if (newval->string[0] == '+')
+-- 
+2.43.0
+
+
+From 4cdcbe502e3aa259ffdca271ee77a311381d0fd2 Mon Sep 17 00:00:00 2001
+From: Shigeru Yoshida <syoshida@redhat.com>
+Date: Wed, 3 Jul 2024 18:16:49 +0900
+Subject: [PATCH 43/70] inet_diag: Initialize pad field in struct
+ inet_diag_req_v2
+
+[ Upstream commit 61cf1c739f08190a4cbf047b9fbb192a94d87e3f ]
+
+KMSAN reported uninit-value access in raw_lookup() [1]. Diag for raw
+sockets uses the pad field in struct inet_diag_req_v2 for the
+underlying protocol. This field corresponds to the sdiag_raw_protocol
+field in struct inet_diag_req_raw.
+
+inet_diag_get_exact_compat() converts inet_diag_req to
+inet_diag_req_v2, but leaves the pad field uninitialized. So the issue
+occurs when raw_lookup() accesses the sdiag_raw_protocol field.
+
+Fix this by initializing the pad field in
+inet_diag_get_exact_compat(). Also, do the same fix in
+inet_diag_dump_compat() to avoid the similar issue in the future.
+
+[1]
+BUG: KMSAN: uninit-value in raw_lookup net/ipv4/raw_diag.c:49 [inline]
+BUG: KMSAN: uninit-value in raw_sock_get+0x657/0x800 net/ipv4/raw_diag.c:71
+ raw_lookup net/ipv4/raw_diag.c:49 [inline]
+ raw_sock_get+0x657/0x800 net/ipv4/raw_diag.c:71
+ raw_diag_dump_one+0xa1/0x660 net/ipv4/raw_diag.c:99
+ inet_diag_cmd_exact+0x7d9/0x980
+ inet_diag_get_exact_compat net/ipv4/inet_diag.c:1404 [inline]
+ inet_diag_rcv_msg_compat+0x469/0x530 net/ipv4/inet_diag.c:1426
+ sock_diag_rcv_msg+0x23d/0x740 net/core/sock_diag.c:282
+ netlink_rcv_skb+0x537/0x670 net/netlink/af_netlink.c:2564
+ sock_diag_rcv+0x35/0x40 net/core/sock_diag.c:297
+ netlink_unicast_kernel net/netlink/af_netlink.c:1335 [inline]
+ netlink_unicast+0xe74/0x1240 net/netlink/af_netlink.c:1361
+ netlink_sendmsg+0x10c6/0x1260 net/netlink/af_netlink.c:1905
+ sock_sendmsg_nosec net/socket.c:730 [inline]
+ __sock_sendmsg+0x332/0x3d0 net/socket.c:745
+ ____sys_sendmsg+0x7f0/0xb70 net/socket.c:2585
+ ___sys_sendmsg+0x271/0x3b0 net/socket.c:2639
+ __sys_sendmsg net/socket.c:2668 [inline]
+ __do_sys_sendmsg net/socket.c:2677 [inline]
+ __se_sys_sendmsg net/socket.c:2675 [inline]
+ __x64_sys_sendmsg+0x27e/0x4a0 net/socket.c:2675
+ x64_sys_call+0x135e/0x3ce0 arch/x86/include/generated/asm/syscalls_64.h:47
+ do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+ do_syscall_64+0xd9/0x1e0 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x77/0x7f
+
+Uninit was stored to memory at:
+ raw_sock_get+0x650/0x800 net/ipv4/raw_diag.c:71
+ raw_diag_dump_one+0xa1/0x660 net/ipv4/raw_diag.c:99
+ inet_diag_cmd_exact+0x7d9/0x980
+ inet_diag_get_exact_compat net/ipv4/inet_diag.c:1404 [inline]
+ inet_diag_rcv_msg_compat+0x469/0x530 net/ipv4/inet_diag.c:1426
+ sock_diag_rcv_msg+0x23d/0x740 net/core/sock_diag.c:282
+ netlink_rcv_skb+0x537/0x670 net/netlink/af_netlink.c:2564
+ sock_diag_rcv+0x35/0x40 net/core/sock_diag.c:297
+ netlink_unicast_kernel net/netlink/af_netlink.c:1335 [inline]
+ netlink_unicast+0xe74/0x1240 net/netlink/af_netlink.c:1361
+ netlink_sendmsg+0x10c6/0x1260 net/netlink/af_netlink.c:1905
+ sock_sendmsg_nosec net/socket.c:730 [inline]
+ __sock_sendmsg+0x332/0x3d0 net/socket.c:745
+ ____sys_sendmsg+0x7f0/0xb70 net/socket.c:2585
+ ___sys_sendmsg+0x271/0x3b0 net/socket.c:2639
+ __sys_sendmsg net/socket.c:2668 [inline]
+ __do_sys_sendmsg net/socket.c:2677 [inline]
+ __se_sys_sendmsg net/socket.c:2675 [inline]
+ __x64_sys_sendmsg+0x27e/0x4a0 net/socket.c:2675
+ x64_sys_call+0x135e/0x3ce0 arch/x86/include/generated/asm/syscalls_64.h:47
+ do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+ do_syscall_64+0xd9/0x1e0 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x77/0x7f
+
+Local variable req.i created at:
+ inet_diag_get_exact_compat net/ipv4/inet_diag.c:1396 [inline]
+ inet_diag_rcv_msg_compat+0x2a6/0x530 net/ipv4/inet_diag.c:1426
+ sock_diag_rcv_msg+0x23d/0x740 net/core/sock_diag.c:282
+
+CPU: 1 PID: 8888 Comm: syz-executor.6 Not tainted 6.10.0-rc4-00217-g35bb670d65fc #32
+Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.16.3-2.fc40 04/01/2014
+
+Fixes: 432490f9d455 ("net: ip, diag -- Add diag interface for raw sockets")
+Reported-by: syzkaller <syzkaller@googlegroups.com>
+Signed-off-by: Shigeru Yoshida <syoshida@redhat.com>
+Reviewed-by: Eric Dumazet <edumazet@google.com>
+Link: https://patch.msgid.link/20240703091649.111773-1-syoshida@redhat.com
+Signed-off-by: Paolo Abeni <pabeni@redhat.com>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/ipv4/inet_diag.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/net/ipv4/inet_diag.c b/net/ipv4/inet_diag.c
+index 5fac8d776391..92d917d113a0 100644
+--- a/net/ipv4/inet_diag.c
++++ b/net/ipv4/inet_diag.c
+@@ -1090,6 +1090,7 @@ static int inet_diag_dump_compat(struct sk_buff *skb,
+ 	req.sdiag_family = AF_UNSPEC; /* compatibility */
+ 	req.sdiag_protocol = inet_diag_type2proto(cb->nlh->nlmsg_type);
+ 	req.idiag_ext = rc->idiag_ext;
++	req.pad = 0;
+ 	req.idiag_states = rc->idiag_states;
+ 	req.id = rc->id;
+ 
+@@ -1108,6 +1109,7 @@ static int inet_diag_get_exact_compat(struct sk_buff *in_skb,
+ 	req.sdiag_family = rc->idiag_family;
+ 	req.sdiag_protocol = inet_diag_type2proto(nlh->nlmsg_type);
+ 	req.idiag_ext = rc->idiag_ext;
++	req.pad = 0;
+ 	req.idiag_states = rc->idiag_states;
+ 	req.id = rc->id;
+ 
+-- 
+2.43.0
+
+
+From 75d5a43b301533f958f82c8d170fe3221b0057ce Mon Sep 17 00:00:00 2001
+From: Dmitry Antipov <dmantipov@yandex.ru>
+Date: Mon, 8 Jul 2024 14:56:15 +0300
+Subject: [PATCH 44/70] ppp: reject claimed-as-LCP but actually malformed
+ packets
+
+[ Upstream commit f2aeb7306a898e1cbd03963d376f4b6656ca2b55 ]
+
+Since 'ppp_async_encode()' assumes valid LCP packets (with code
+from 1 to 7 inclusive), add 'ppp_check_packet()' to ensure that
+LCP packet has an actual body beyond PPP_LCP header bytes, and
+reject claimed-as-LCP but actually malformed data otherwise.
+
+Reported-by: syzbot+ec0723ba9605678b14bf@syzkaller.appspotmail.com
+Closes: https://syzkaller.appspot.com/bug?extid=ec0723ba9605678b14bf
+Fixes: 1da177e4c3f4 ("Linux-2.6.12-rc2")
+Signed-off-by: Dmitry Antipov <dmantipov@yandex.ru>
+Signed-off-by: Paolo Abeni <pabeni@redhat.com>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/net/ppp/ppp_generic.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/net/ppp/ppp_generic.c b/drivers/net/ppp/ppp_generic.c
+index 6875ec3a881d..b2103f72f1bd 100644
+--- a/drivers/net/ppp/ppp_generic.c
++++ b/drivers/net/ppp/ppp_generic.c
+@@ -73,6 +73,7 @@
+ #define MPHDRLEN_SSN	4	/* ditto with short sequence numbers */
+ 
+ #define PPP_PROTO_LEN	2
++#define PPP_LCP_HDRLEN	4
+ 
+ /*
+  * An instance of /dev/ppp can be associated with either a ppp
+@@ -494,6 +495,15 @@ static ssize_t ppp_read(struct file *file, char __user *buf,
+ 	return ret;
+ }
+ 
++static bool ppp_check_packet(struct sk_buff *skb, size_t count)
++{
++	/* LCP packets must include LCP header which 4 bytes long:
++	 * 1-byte code, 1-byte identifier, and 2-byte length.
++	 */
++	return get_unaligned_be16(skb->data) != PPP_LCP ||
++		count >= PPP_PROTO_LEN + PPP_LCP_HDRLEN;
++}
++
+ static ssize_t ppp_write(struct file *file, const char __user *buf,
+ 			 size_t count, loff_t *ppos)
+ {
+@@ -516,6 +526,11 @@ static ssize_t ppp_write(struct file *file, const char __user *buf,
+ 		kfree_skb(skb);
+ 		goto out;
+ 	}
++	ret = -EINVAL;
++	if (unlikely(!ppp_check_packet(skb, count))) {
++		kfree_skb(skb);
++		goto out;
++	}
+ 
+ 	switch (pf->kind) {
+ 	case INTERFACE:
+-- 
+2.43.0
+
+
+From de62006b94385ea0e9ab0429c5c102651bd28d7b Mon Sep 17 00:00:00 2001
+From: Jann Horn <jannh@google.com>
+Date: Tue, 2 Jul 2024 18:26:52 +0200
+Subject: [PATCH 45/70] filelock: Remove locks reliably when fcntl/close race
+ is detected
+
+commit 3cad1bc010416c6dd780643476bc59ed742436b9 upstream.
+
+When fcntl_setlk() races with close(), it removes the created lock with
+do_lock_file_wait().
+However, LSMs can allow the first do_lock_file_wait() that created the lock
+while denying the second do_lock_file_wait() that tries to remove the lock.
+In theory (but AFAIK not in practice), posix_lock_file() could also fail to
+remove a lock due to GFP_KERNEL allocation failure (when splitting a range
+in the middle).
+
+After the bug has been triggered, use-after-free reads will occur in
+lock_get_status() when userspace reads /proc/locks. This can likely be used
+to read arbitrary kernel memory, but can't corrupt kernel memory.
+This only affects systems with SELinux / Smack / AppArmor / BPF-LSM in
+enforcing mode and only works from some security contexts.
+
+Fix it by calling locks_remove_posix() instead, which is designed to
+reliably get rid of POSIX locks associated with the given file and
+files_struct and is also used by filp_flush().
+
+Fixes: c293621bbf67 ("[PATCH] stale POSIX lock handling")
+Cc: stable@kernel.org
+Link: https://bugs.chromium.org/p/project-zero/issues/detail?id=2563
+Signed-off-by: Jann Horn <jannh@google.com>
+Link: https://lore.kernel.org/r/20240702-fs-lock-recover-2-v1-1-edd456f63789@google.com
+Reviewed-by: Jeff Layton <jlayton@kernel.org>
+Signed-off-by: Christian Brauner <brauner@kernel.org>
+[stable fixup: ->c.flc_type was ->fl_type in older kernels]
+Signed-off-by: Jann Horn <jannh@google.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ fs/locks.c | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/fs/locks.c b/fs/locks.c
+index 25890225ff61..c9c32a6aa57d 100644
+--- a/fs/locks.c
++++ b/fs/locks.c
+@@ -2439,8 +2439,9 @@ int fcntl_setlk64(unsigned int fd, struct file *filp, unsigned int cmd,
+ 	error = do_lock_file_wait(filp, cmd, file_lock);
+ 
+ 	/*
+-	 * Attempt to detect a close/fcntl race and recover by releasing the
+-	 * lock that was just acquired. There is no need to do that when we're
++	 * Detect close/fcntl races and recover by zapping all POSIX locks
++	 * associated with this file and our files_struct, just like on
++	 * filp_flush(). There is no need to do that when we're
+ 	 * unlocking though, or for OFD locks.
+ 	 */
+ 	if (!error && file_lock->fl_type != F_UNLCK &&
+@@ -2454,9 +2455,7 @@ int fcntl_setlk64(unsigned int fd, struct file *filp, unsigned int cmd,
+ 		f = fcheck(fd);
+ 		spin_unlock(&current->files->file_lock);
+ 		if (f != filp) {
+-			file_lock->fl_type = F_UNLCK;
+-			error = do_lock_file_wait(filp, cmd, file_lock);
+-			WARN_ON_ONCE(error);
++			locks_remove_posix(filp, &current->files);
+ 			error = -EBADF;
+ 		}
+ 	}
+-- 
+2.43.0
+
+
+From 7e9698a8b065e3b2bc765ce32ec47cb2ffc8ca50 Mon Sep 17 00:00:00 2001
+From: Jann Horn <jannh@google.com>
+Date: Tue, 23 Jul 2024 17:03:56 +0200
+Subject: [PATCH 46/70] filelock: Fix fcntl/close race recovery compat path
+
+commit f8138f2ad2f745b9a1c696a05b749eabe44337ea upstream.
+
+When I wrote commit 3cad1bc01041 ("filelock: Remove locks reliably when
+fcntl/close race is detected"), I missed that there are two copies of the
+code I was patching: The normal version, and the version for 64-bit offsets
+on 32-bit kernels.
+Thanks to Greg KH for stumbling over this while doing the stable
+backport...
+
+Apply exactly the same fix to the compat path for 32-bit kernels.
+
+Fixes: c293621bbf67 ("[PATCH] stale POSIX lock handling")
+Cc: stable@kernel.org
+Link: https://bugs.chromium.org/p/project-zero/issues/detail?id=2563
+Signed-off-by: Jann Horn <jannh@google.com>
+Link: https://lore.kernel.org/r/20240723-fs-lock-recover-compatfix-v1-1-148096719529@google.com
+Signed-off-by: Christian Brauner <brauner@kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ fs/locks.c | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/fs/locks.c b/fs/locks.c
+index c9c32a6aa57d..312ca1611269 100644
+--- a/fs/locks.c
++++ b/fs/locks.c
+@@ -2308,8 +2308,9 @@ int fcntl_setlk(unsigned int fd, struct file *filp, unsigned int cmd,
+ 	error = do_lock_file_wait(filp, cmd, file_lock);
+ 
+ 	/*
+-	 * Attempt to detect a close/fcntl race and recover by releasing the
+-	 * lock that was just acquired. There is no need to do that when we're
++	 * Detect close/fcntl races and recover by zapping all POSIX locks
++	 * associated with this file and our files_struct, just like on
++	 * filp_flush(). There is no need to do that when we're
+ 	 * unlocking though, or for OFD locks.
+ 	 */
+ 	if (!error && file_lock->fl_type != F_UNLCK &&
+@@ -2323,9 +2324,7 @@ int fcntl_setlk(unsigned int fd, struct file *filp, unsigned int cmd,
+ 		f = fcheck(fd);
+ 		spin_unlock(&current->files->file_lock);
+ 		if (f != filp) {
+-			file_lock->fl_type = F_UNLCK;
+-			error = do_lock_file_wait(filp, cmd, file_lock);
+-			WARN_ON_ONCE(error);
++			locks_remove_posix(filp, &current->files);
+ 			error = -EBADF;
+ 		}
+ 	}
+-- 
+2.43.0
+
+
+From face35de01cbd0ae72bb114b9affb40018bb6cc1 Mon Sep 17 00:00:00 2001
+From: Adrian Hunter <adrian.hunter@intel.com>
+Date: Mon, 24 Jun 2024 23:10:58 +0300
+Subject: [PATCH 47/70] perf: Fix perf_aux_size() for greater-than 32-bit size
+
+[ Upstream commit 3df94a5b1078dfe2b0c03f027d018800faf44c82 ]
+
+perf_buffer->aux_nr_pages uses a 32-bit type, so a cast is needed to
+calculate a 64-bit size.
+
+Fixes: 45bfb2e50471 ("perf: Add AUX area to ring buffer for raw data streams")
+Signed-off-by: Adrian Hunter <adrian.hunter@intel.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Link: https://lore.kernel.org/r/20240624201101.60186-5-adrian.hunter@intel.com
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ kernel/events/internal.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/events/internal.h b/kernel/events/internal.h
+index 41317d04eeae..bb1c0eeca4d6 100644
+--- a/kernel/events/internal.h
++++ b/kernel/events/internal.h
+@@ -121,7 +121,7 @@ static inline unsigned long perf_data_size(struct ring_buffer *rb)
+ 
+ static inline unsigned long perf_aux_size(struct ring_buffer *rb)
+ {
+-	return rb->aux_nr_pages << PAGE_SHIFT;
++	return (unsigned long)rb->aux_nr_pages << PAGE_SHIFT;
+ }
+ 
+ #define __DEFINE_OUTPUT_COPY_BODY(advance_buf, memcpy_func, ...)	\
+-- 
+2.43.0
+
+
+From 86573f6908438f06b73d8ebb2ea0236fead98903 Mon Sep 17 00:00:00 2001
+From: Adrian Hunter <adrian.hunter@intel.com>
+Date: Mon, 24 Jun 2024 23:10:59 +0300
+Subject: [PATCH 48/70] perf: Prevent passing zero nr_pages to rb_alloc_aux()
+
+[ Upstream commit dbc48c8f41c208082cfa95e973560134489e3309 ]
+
+nr_pages is unsigned long but gets passed to rb_alloc_aux() as an int,
+and is stored as an int.
+
+Only power-of-2 values are accepted, so if nr_pages is a 64_bit value, it
+will be passed to rb_alloc_aux() as zero.
+
+That is not ideal because:
+ 1. the value is incorrect
+ 2. rb_alloc_aux() is at risk of misbehaving, although it manages to
+ return -ENOMEM in that case, it is a result of passing zero to get_order()
+ even though the get_order() result is documented to be undefined in that
+ case.
+
+Fix by simply validating the maximum supported value in the first place.
+Use -ENOMEM error code for consistency with the current error code that
+is returned in that case.
+
+Fixes: 45bfb2e50471 ("perf: Add AUX area to ring buffer for raw data streams")
+Signed-off-by: Adrian Hunter <adrian.hunter@intel.com>
+Signed-off-by: Peter Zijlstra (Intel) <peterz@infradead.org>
+Link: https://lore.kernel.org/r/20240624201101.60186-6-adrian.hunter@intel.com
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ kernel/events/core.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index 1d355a270351..66d9a1e10158 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -5427,6 +5427,8 @@ static int perf_mmap(struct file *file, struct vm_area_struct *vma)
+ 			return -EINVAL;
+ 
+ 		nr_pages = vma_size / PAGE_SIZE;
++		if (nr_pages > INT_MAX)
++			return -ENOMEM;
+ 
+ 		mutex_lock(&event->mmap_mutex);
+ 		ret = -EINVAL;
+-- 
+2.43.0
+
+
+From 7394e39d64b4279f2ee6eb339b6703901aff815b Mon Sep 17 00:00:00 2001
+From: Jan Kara <jack@suse.cz>
+Date: Thu, 13 Jun 2024 17:02:34 +0200
+Subject: [PATCH 49/70] ext4: avoid writing unitialized memory to disk in EA
+ inodes
+
+[ Upstream commit 65121eff3e4c8c90f8126debf3c369228691c591 ]
+
+If the extended attribute size is not a multiple of block size, the last
+block in the EA inode will have uninitialized tail which will get
+written to disk. We will never expose the data to userspace but still
+this is not a good practice so just zero out the tail of the block as it
+isn't going to cause a noticeable performance overhead.
+
+Fixes: e50e5129f384 ("ext4: xattr-in-inode support")
+Reported-by: syzbot+9c1fe13fcb51574b249b@syzkaller.appspotmail.com
+Reported-by: Hugh Dickins <hughd@google.com>
+Signed-off-by: Jan Kara <jack@suse.cz>
+Link: https://patch.msgid.link/20240613150234.25176-1-jack@suse.cz
+Signed-off-by: Theodore Ts'o <tytso@mit.edu>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ fs/ext4/xattr.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/fs/ext4/xattr.c b/fs/ext4/xattr.c
+index 6aa215cf828d..7adf9b9cb26e 100644
+--- a/fs/ext4/xattr.c
++++ b/fs/ext4/xattr.c
+@@ -1410,6 +1410,12 @@ static int ext4_xattr_inode_write(handle_t *handle, struct inode *ea_inode,
+ 			goto out;
+ 
+ 		memcpy(bh->b_data, buf, csize);
++		/*
++		 * Zero out block tail to avoid writing uninitialized memory
++		 * to disk.
++		 */
++		if (csize < blocksize)
++			memset(bh->b_data + csize, 0, blocksize - csize);
+ 		set_buffer_uptodate(bh);
+ 		ext4_handle_dirty_metadata(handle, ea_inode, bh);
+ 
+-- 
+2.43.0
+
+
+From fe5b33c3d0d6946a729ed562eb0a235c3b131e19 Mon Sep 17 00:00:00 2001
+From: Baokun Li <libaokun1@huawei.com>
+Date: Tue, 2 Jul 2024 21:23:48 +0800
+Subject: [PATCH 50/70] ext4: check dot and dotdot of dx_root before making dir
+ indexed
+
+commit 50ea741def587a64e08879ce6c6a30131f7111e7 upstream.
+
+Syzbot reports a issue as follows:
+============================================
+BUG: unable to handle page fault for address: ffffed11022e24fe
+PGD 23ffee067 P4D 23ffee067 PUD 0
+Oops: Oops: 0000 [#1] PREEMPT SMP KASAN PTI
+CPU: 0 PID: 5079 Comm: syz-executor306 Not tainted 6.10.0-rc5-g55027e689933 #0
+Call Trace:
+ <TASK>
+ make_indexed_dir+0xdaf/0x13c0 fs/ext4/namei.c:2341
+ ext4_add_entry+0x222a/0x25d0 fs/ext4/namei.c:2451
+ ext4_rename fs/ext4/namei.c:3936 [inline]
+ ext4_rename2+0x26e5/0x4370 fs/ext4/namei.c:4214
+[...]
+============================================
+
+The immediate cause of this problem is that there is only one valid dentry
+for the block to be split during do_split, so split==0 results in out of
+bounds accesses to the map triggering the issue.
+
+    do_split
+      unsigned split
+      dx_make_map
+       count = 1
+      split = count/2 = 0;
+      continued = hash2 == map[split - 1].hash;
+       ---> map[4294967295]
+
+The maximum length of a filename is 255 and the minimum block size is 1024,
+so it is always guaranteed that the number of entries is greater than or
+equal to 2 when do_split() is called.
+
+But syzbot's crafted image has no dot and dotdot in dir, and the dentry
+distribution in dirblock is as follows:
+
+  bus     dentry1          hole           dentry2           free
+|xx--|xx-------------|...............|xx-------------|...............|
+0   12 (8+248)=256  268     256     524 (8+256)=264 788     236     1024
+
+So when renaming dentry1 increases its name_len length by 1, neither hole
+nor free is sufficient to hold the new dentry, and make_indexed_dir() is
+called.
+
+In make_indexed_dir() it is assumed that the first two entries of the
+dirblock must be dot and dotdot, so bus and dentry1 are left in dx_root
+because they are treated as dot and dotdot, and only dentry2 is moved
+to the new leaf block. That's why count is equal to 1.
+
+Therefore add the ext4_check_dx_root() helper function to add more sanity
+checks to dot and dotdot before starting the conversion to avoid the above
+issue.
+
+Reported-by: syzbot+ae688d469e36fb5138d0@syzkaller.appspotmail.com
+Closes: https://syzkaller.appspot.com/bug?extid=ae688d469e36fb5138d0
+Fixes: ac27a0ec112a ("[PATCH] ext4: initial copy of files from ext3")
+Cc: stable@kernel.org
+Signed-off-by: Baokun Li <libaokun1@huawei.com>
+Reviewed-by: Jan Kara <jack@suse.cz>
+Link: https://patch.msgid.link/20240702132349.2600605-2-libaokun@huaweicloud.com
+Signed-off-by: Theodore Ts'o <tytso@mit.edu>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ fs/ext4/namei.c | 56 ++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 51 insertions(+), 5 deletions(-)
+
+diff --git a/fs/ext4/namei.c b/fs/ext4/namei.c
+index ab249837d1ca..d2ac0bc3d0f8 100755
+--- a/fs/ext4/namei.c
++++ b/fs/ext4/namei.c
+@@ -2180,6 +2180,52 @@ static int add_dirent_to_buf(handle_t *handle, struct ext4_filename *fname,
+ 	return 0;
+ }
+ 
++static bool ext4_check_dx_root(struct inode *dir, struct dx_root *root)
++{
++	struct fake_dirent *fde;
++	const char *error_msg;
++	unsigned int rlen;
++	unsigned int blocksize = dir->i_sb->s_blocksize;
++	char *blockend = (char *)root + dir->i_sb->s_blocksize;
++
++	fde = &root->dot;
++	if (unlikely(fde->name_len != 1)) {
++		error_msg = "invalid name_len for '.'";
++		goto corrupted;
++	}
++	if (unlikely(strncmp(root->dot_name, ".", fde->name_len))) {
++		error_msg = "invalid name for '.'";
++		goto corrupted;
++	}
++	rlen = ext4_rec_len_from_disk(fde->rec_len, blocksize);
++	if (unlikely((char *)fde + rlen >= blockend)) {
++		error_msg = "invalid rec_len for '.'";
++		goto corrupted;
++	}
++
++	fde = &root->dotdot;
++	if (unlikely(fde->name_len != 2)) {
++		error_msg = "invalid name_len for '..'";
++		goto corrupted;
++	}
++	if (unlikely(strncmp(root->dotdot_name, "..", fde->name_len))) {
++		error_msg = "invalid name for '..'";
++		goto corrupted;
++	}
++	rlen = ext4_rec_len_from_disk(fde->rec_len, blocksize);
++	if (unlikely((char *)fde + rlen >= blockend)) {
++		error_msg = "invalid rec_len for '..'";
++		goto corrupted;
++	}
++
++	return true;
++
++corrupted:
++	EXT4_ERROR_INODE(dir, "Corrupt dir, %s, running e2fsck is recommended",
++			 error_msg);
++	return false;
++}
++
+ /*
+  * This converts a one block unindexed directory to a 3 block indexed
+  * directory, and adds the dentry to the indexed directory.
+@@ -2214,17 +2260,17 @@ static int make_indexed_dir(handle_t *handle, struct ext4_filename *fname,
+ 		brelse(bh);
+ 		return retval;
+ 	}
++
+ 	root = (struct dx_root *) bh->b_data;
++	if (!ext4_check_dx_root(dir, root)) {
++		brelse(bh);
++		return -EFSCORRUPTED;
++	}
+ 
+ 	/* The 0th block becomes the root, move the dirents out */
+ 	fde = &root->dotdot;
+ 	de = (struct ext4_dir_entry_2 *)((char *)fde +
+ 		ext4_rec_len_from_disk(fde->rec_len, blocksize));
+-	if ((char *) de >= (((char *) root) + blocksize)) {
+-		EXT4_ERROR_INODE(dir, "invalid rec_len for '..'");
+-		brelse(bh);
+-		return -EFSCORRUPTED;
+-	}
+ 	len = ((char *) root) + (blocksize - csum_size) - (char *) de;
+ 
+ 	/* Allocate new block for the 0th block's dirents */
+-- 
+2.43.0
+
+
+From 54a5922110d79dfd3bcfc29ab47d8c46cd71782f Mon Sep 17 00:00:00 2001
+From: Carlos Llamas <cmllamas@google.com>
+Date: Thu, 11 Jul 2024 20:14:51 +0000
+Subject: [PATCH 51/70] binder: fix hang of unregistered readers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+commit 31643d84b8c3d9c846aa0e20bc033e46c68c7e7d upstream.
+
+With the introduction of binder_available_for_proc_work_ilocked() in
+commit 1b77e9dcc3da ("ANDROID: binder: remove proc waitqueue") a binder
+thread can only "wait_for_proc_work" after its thread->looper has been
+marked as BINDER_LOOPER_STATE_{ENTERED|REGISTERED}.
+
+This means an unregistered reader risks waiting indefinitely for work
+since it never gets added to the proc->waiting_threads. If there are no
+further references to its waitqueue either the task will hang. The same
+applies to readers using the (e)poll interface.
+
+I couldn't find the rationale behind this restriction. So this patch
+restores the previous behavior of allowing unregistered threads to
+"wait_for_proc_work". Note that an error message for this scenario,
+which had previously become unreachable, is now re-enabled.
+
+Fixes: 1b77e9dcc3da ("ANDROID: binder: remove proc waitqueue")
+Cc: stable@vger.kernel.org
+Cc: Martijn Coenen <maco@google.com>
+Cc: Arve Hjønnevåg <arve@google.com>
+Signed-off-by: Carlos Llamas <cmllamas@google.com>
+Link: https://lore.kernel.org/r/20240711201452.2017543-1-cmllamas@google.com
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ drivers/android/binder.c | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/drivers/android/binder.c b/drivers/android/binder.c
+index 486b6eff10fc..ba07a4387077 100755
+--- a/drivers/android/binder.c
++++ b/drivers/android/binder.c
+@@ -1661,9 +1661,7 @@ static bool binder_has_work(struct binder_thread *thread, bool do_proc_work)
+ static bool binder_available_for_proc_work_ilocked(struct binder_thread *thread)
+ {
+ 	return !thread->transaction_stack &&
+-		binder_worklist_empty_ilocked(&thread->todo) &&
+-		(thread->looper & (BINDER_LOOPER_STATE_ENTERED |
+-				   BINDER_LOOPER_STATE_REGISTERED));
++		binder_worklist_empty_ilocked(&thread->todo);
+ }
+ 
+ static void binder_wakeup_poll_threads_ilocked(struct binder_proc *proc,
+-- 
+2.43.0
+
+
+From ee817379887b8bcdef9cfcc57858d1a0bcc72506 Mon Sep 17 00:00:00 2001
+From: Justin Stitt <justinstitt@google.com>
+Date: Fri, 17 May 2024 20:22:44 +0000
+Subject: [PATCH 52/70] ntp: Clamp maxerror and esterror to operating range
+
+[ Upstream commit 87d571d6fb77ec342a985afa8744bb9bb75b3622 ]
+
+Using syzkaller alongside the newly reintroduced signed integer overflow
+sanitizer spits out this report:
+
+UBSAN: signed-integer-overflow in ../kernel/time/ntp.c:461:16
+9223372036854775807 + 500 cannot be represented in type 'long'
+Call Trace:
+ handle_overflow+0x171/0x1b0
+ second_overflow+0x2d6/0x500
+ accumulate_nsecs_to_secs+0x60/0x160
+ timekeeping_advance+0x1fe/0x890
+ update_wall_time+0x10/0x30
+
+time_maxerror is unconditionally incremented and the result is checked
+against NTP_PHASE_LIMIT, but the increment itself can overflow, resulting
+in wrap-around to negative space.
+
+Before commit eea83d896e31 ("ntp: NTP4 user space bits update") the user
+supplied value was sanity checked to be in the operating range. That change
+removed the sanity check and relied on clamping in handle_overflow() which
+does not work correctly when the user supplied value is in the overflow
+zone of the '+ 500' operation.
+
+The operation requires CAP_SYS_TIME and the side effect of the overflow is
+NTP getting out of sync.
+
+Miroslav confirmed that the input value should be clamped to the operating
+range and the same applies to time_esterror. The latter is not used by the
+kernel, but the value still should be in the operating range as it was
+before the sanity check got removed.
+
+Clamp them to the operating range.
+
+[ tglx: Changed it to clamping and included time_esterror ]
+
+Fixes: eea83d896e31 ("ntp: NTP4 user space bits update")
+Signed-off-by: Justin Stitt <justinstitt@google.com>
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Cc: Miroslav Lichvar <mlichvar@redhat.com>
+Link: https://lore.kernel.org/all/20240517-b4-sio-ntp-usec-v2-1-d539180f2b79@google.com
+Closes: https://github.com/KSPP/linux/issues/354
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+[ cast things to long long to fix compiler warnings - gregkh ]
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ kernel/time/ntp.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/time/ntp.c b/kernel/time/ntp.c
+index 678a7e5d46f4..95d0f496fdb1 100644
+--- a/kernel/time/ntp.c
++++ b/kernel/time/ntp.c
+@@ -628,10 +628,10 @@ static inline void process_adjtimex_modes(struct timex *txc,
+ 	}
+ 
+ 	if (txc->modes & ADJ_MAXERROR)
+-		time_maxerror = txc->maxerror;
++		time_maxerror = clamp(txc->maxerror, (long long)0, (long long)NTP_PHASE_LIMIT);
+ 
+ 	if (txc->modes & ADJ_ESTERROR)
+-		time_esterror = txc->esterror;
++		time_esterror = clamp(txc->esterror, (long long)0, (long long)NTP_PHASE_LIMIT);
+ 
+ 	if (txc->modes & ADJ_TIMECONST) {
+ 		time_constant = txc->constant;
+-- 
+2.43.0
+
+
+From d2e0823257498bf3459f123e016552756cb8eef9 Mon Sep 17 00:00:00 2001
+From: Jann Horn <jannh@google.com>
+Date: Tue, 6 Aug 2024 21:51:42 +0200
+Subject: [PATCH 53/70] fuse: Initialize beyond-EOF page contents before
+ setting uptodate
+
+commit 3c0da3d163eb32f1f91891efaade027fa9b245b9 upstream.
+
+fuse_notify_store(), unlike fuse_do_readpage(), does not enable page
+zeroing (because it can be used to change partial page contents).
+
+So fuse_notify_store() must be more careful to fully initialize page
+contents (including parts of the page that are beyond end-of-file)
+before marking the page uptodate.
+
+The current code can leave beyond-EOF page contents uninitialized, which
+makes these uninitialized page contents visible to userspace via mmap().
+
+This is an information leak, but only affects systems which do not
+enable init-on-alloc (via CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y or the
+corresponding kernel command line parameter).
+
+Link: https://bugs.chromium.org/p/project-zero/issues/detail?id=2574
+Cc: stable@kernel.org
+Fixes: a1d75f258230 ("fuse: add store request")
+Signed-off-by: Jann Horn <jannh@google.com>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ fs/fuse/dev.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/fs/fuse/dev.c b/fs/fuse/dev.c
+index 75efbce155fe..05b22c51ec8f 100755
+--- a/fs/fuse/dev.c
++++ b/fs/fuse/dev.c
+@@ -1704,9 +1704,11 @@ static int fuse_notify_store(struct fuse_conn *fc, unsigned int size,
+ 
+ 		this_num = min_t(unsigned, num, PAGE_SIZE - offset);
+ 		err = fuse_copy_page(cs, &page, offset, this_num, 0);
+-		if (!err && offset == 0 &&
+-		    (this_num == PAGE_SIZE || file_size == end))
++		if (!PageUptodate(page) && !err && offset == 0 &&
++		    (this_num == PAGE_SIZE || file_size == end)) {
++			zero_user_segment(page, this_num, PAGE_SIZE);
+ 			SetPageUptodate(page);
++		}
+ 		unlock_page(page);
+ 		put_page(page);
+ 
+-- 
+2.43.0
+
+
+From 9c376908a511a7cfc7e35160388c2c7d8423aeeb Mon Sep 17 00:00:00 2001
+From: Zhen Lei <thunder.leizhen@huawei.com>
+Date: Tue, 6 Aug 2024 14:51:13 +0800
+Subject: [PATCH 54/70] selinux: fix potential counting error in
+ avc_add_xperms_decision()
+
+commit 379d9af3f3da2da1bbfa67baf1820c72a080d1f1 upstream.
+
+The count increases only when a node is successfully added to
+the linked list.
+
+Cc: stable@vger.kernel.org
+Fixes: fa1aa143ac4a ("selinux: extended permissions for ioctls")
+Signed-off-by: Zhen Lei <thunder.leizhen@huawei.com>
+Acked-by: Stephen Smalley <stephen.smalley.work@gmail.com>
+Signed-off-by: Paul Moore <paul@paul-moore.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ security/selinux/avc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/security/selinux/avc.c b/security/selinux/avc.c
+index f624bc4e612c..4e9d4893e67c 100644
+--- a/security/selinux/avc.c
++++ b/security/selinux/avc.c
+@@ -401,12 +401,12 @@ static int avc_add_xperms_decision(struct avc_node *node,
+ {
+ 	struct avc_xperms_decision_node *dest_xpd;
+ 
+-	node->ae.xp_node->xp.len++;
+ 	dest_xpd = avc_xperms_decision_alloc(src->used);
+ 	if (!dest_xpd)
+ 		return -ENOMEM;
+ 	avc_copy_xperms_decision(&dest_xpd->xpd, src);
+ 	list_add(&dest_xpd->xpd_list, &node->ae.xp_node->xpd_head);
++	node->ae.xp_node->xp.len++;
+ 	return 0;
+ }
+ 
+-- 
+2.43.0
+
+
+From 99a9af129d950b989a78363e80d586abd6539cf1 Mon Sep 17 00:00:00 2001
+From: Al Viro <viro@zeniv.linux.org.uk>
+Date: Sun, 21 Jul 2024 14:45:08 -0400
+Subject: [PATCH 55/70] memcg_write_event_control(): fix a user-triggerable
+ oops
+
+commit 046667c4d3196938e992fba0dfcde570aa85cd0e upstream.
+
+we are *not* guaranteed that anything past the terminating NUL
+is mapped (let alone initialized with anything sane).
+
+Fixes: 0dea116876ee ("cgroup: implement eventfd-based generic API for notifications")
+Cc: stable@vger.kernel.org
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Acked-by: Michal Hocko <mhocko@suse.com>
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ mm/memcontrol.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/mm/memcontrol.c b/mm/memcontrol.c
+index b0e4fc995b4b..2e1ee97a9d9a 100644
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -3925,9 +3925,12 @@ static ssize_t memcg_write_event_control(struct kernfs_open_file *of,
+ 	buf = endp + 1;
+ 
+ 	cfd = simple_strtoul(buf, &endp, 10);
+-	if ((*endp != ' ') && (*endp != '\0'))
++	if (*endp == '\0')
++		buf = endp;
++	else if (*endp == ' ')
++		buf = endp + 1;
++	else
+ 		return -EINVAL;
+-	buf = endp + 1;
+ 
+ 	event = kzalloc(sizeof(*event), GFP_KERNEL);
+ 	if (!event)
+-- 
+2.43.0
+
+
+From 4a6a6b3699f8478460a7cb08244c78052d64e296 Mon Sep 17 00:00:00 2001
+From: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Date: Tue, 20 Aug 2024 09:54:31 +0200
+Subject: [PATCH 56/70] netfilter: nft_counter: Synchronize nft_counter_reset()
+ against reader.
+
+[ Upstream commit a0b39e2dc7017ac667b70bdeee5293e410fab2fb ]
+
+nft_counter_reset() resets the counter by subtracting the previously
+retrieved value from the counter. This is a write operation on the
+counter and as such it requires to be performed with a write sequence of
+nft_counter_seq to serialize against its possible reader.
+
+Update the packets/ bytes within write-sequence of nft_counter_seq.
+
+Fixes: d84701ecbcd6a ("netfilter: nft_counter: rework atomic dump and reset")
+Signed-off-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Reviewed-by: Florian Westphal <fw@strlen.de>
+Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/netfilter/nft_counter.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/net/netfilter/nft_counter.c b/net/netfilter/nft_counter.c
+index eefe3b409925..b6c3ca845f64 100644
+--- a/net/netfilter/nft_counter.c
++++ b/net/netfilter/nft_counter.c
+@@ -107,11 +107,16 @@ static void nft_counter_reset(struct nft_counter_percpu_priv __percpu *priv,
+ 			      struct nft_counter *total)
+ {
+ 	struct nft_counter *this_cpu;
++	seqcount_t *myseq;
+ 
+ 	local_bh_disable();
+ 	this_cpu = this_cpu_ptr(priv->counter);
++	myseq = this_cpu_ptr(&nft_counter_seq);
++
++	write_seqcount_begin(myseq);
+ 	this_cpu->packets -= total->packets;
+ 	this_cpu->bytes -= total->bytes;
++	write_seqcount_end(myseq);
+ 	local_bh_enable();
+ }
+ 
+-- 
+2.43.0
+
+
+From 49f5056e2b748ef9924c16f9557ca7dc29b14245 Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Tue, 20 Aug 2024 16:08:57 +0000
+Subject: [PATCH 57/70] ipv6: prevent UAF in ip6_send_skb()
+
+[ Upstream commit faa389b2fbaaec7fd27a390b4896139f9da662e3 ]
+
+syzbot reported an UAF in ip6_send_skb() [1]
+
+After ip6_local_out() has returned, we no longer can safely
+dereference rt, unless we hold rcu_read_lock().
+
+A similar issue has been fixed in commit
+a688caa34beb ("ipv6: take rcu lock in rawv6_send_hdrinc()")
+
+Another potential issue in ip6_finish_output2() is handled in a
+separate patch.
+
+[1]
+ BUG: KASAN: slab-use-after-free in ip6_send_skb+0x18d/0x230 net/ipv6/ip6_output.c:1964
+Read of size 8 at addr ffff88806dde4858 by task syz.1.380/6530
+
+CPU: 1 UID: 0 PID: 6530 Comm: syz.1.380 Not tainted 6.11.0-rc3-syzkaller-00306-gdf6cbc62cc9b #0
+Hardware name: Google Google Compute Engine/Google Compute Engine, BIOS Google 08/06/2024
+Call Trace:
+ <TASK>
+  __dump_stack lib/dump_stack.c:93 [inline]
+  dump_stack_lvl+0x241/0x360 lib/dump_stack.c:119
+  print_address_description mm/kasan/report.c:377 [inline]
+  print_report+0x169/0x550 mm/kasan/report.c:488
+  kasan_report+0x143/0x180 mm/kasan/report.c:601
+  ip6_send_skb+0x18d/0x230 net/ipv6/ip6_output.c:1964
+  rawv6_push_pending_frames+0x75c/0x9e0 net/ipv6/raw.c:588
+  rawv6_sendmsg+0x19c7/0x23c0 net/ipv6/raw.c:926
+  sock_sendmsg_nosec net/socket.c:730 [inline]
+  __sock_sendmsg+0x1a6/0x270 net/socket.c:745
+  sock_write_iter+0x2dd/0x400 net/socket.c:1160
+ do_iter_readv_writev+0x60a/0x890
+  vfs_writev+0x37c/0xbb0 fs/read_write.c:971
+  do_writev+0x1b1/0x350 fs/read_write.c:1018
+  do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+  do_syscall_64+0xf3/0x230 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x77/0x7f
+RIP: 0033:0x7f936bf79e79
+Code: ff ff c3 66 2e 0f 1f 84 00 00 00 00 00 0f 1f 40 00 48 89 f8 48 89 f7 48 89 d6 48 89 ca 4d 89 c2 4d 89 c8 4c 8b 4c 24 08 0f 05 <48> 3d 01 f0 ff ff 73 01 c3 48 c7 c1 a8 ff ff ff f7 d8 64 89 01 48
+RSP: 002b:00007f936cd7f038 EFLAGS: 00000246 ORIG_RAX: 0000000000000014
+RAX: ffffffffffffffda RBX: 00007f936c115f80 RCX: 00007f936bf79e79
+RDX: 0000000000000001 RSI: 0000000020000040 RDI: 0000000000000004
+RBP: 00007f936bfe7916 R08: 0000000000000000 R09: 0000000000000000
+R10: 0000000000000000 R11: 0000000000000246 R12: 0000000000000000
+R13: 0000000000000000 R14: 00007f936c115f80 R15: 00007fff2860a7a8
+ </TASK>
+
+Allocated by task 6530:
+  kasan_save_stack mm/kasan/common.c:47 [inline]
+  kasan_save_track+0x3f/0x80 mm/kasan/common.c:68
+  unpoison_slab_object mm/kasan/common.c:312 [inline]
+  __kasan_slab_alloc+0x66/0x80 mm/kasan/common.c:338
+  kasan_slab_alloc include/linux/kasan.h:201 [inline]
+  slab_post_alloc_hook mm/slub.c:3988 [inline]
+  slab_alloc_node mm/slub.c:4037 [inline]
+  kmem_cache_alloc_noprof+0x135/0x2a0 mm/slub.c:4044
+  dst_alloc+0x12b/0x190 net/core/dst.c:89
+  ip6_blackhole_route+0x59/0x340 net/ipv6/route.c:2670
+  make_blackhole net/xfrm/xfrm_policy.c:3120 [inline]
+  xfrm_lookup_route+0xd1/0x1c0 net/xfrm/xfrm_policy.c:3313
+  ip6_dst_lookup_flow+0x13e/0x180 net/ipv6/ip6_output.c:1257
+  rawv6_sendmsg+0x1283/0x23c0 net/ipv6/raw.c:898
+  sock_sendmsg_nosec net/socket.c:730 [inline]
+  __sock_sendmsg+0x1a6/0x270 net/socket.c:745
+  ____sys_sendmsg+0x525/0x7d0 net/socket.c:2597
+  ___sys_sendmsg net/socket.c:2651 [inline]
+  __sys_sendmsg+0x2b0/0x3a0 net/socket.c:2680
+  do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+  do_syscall_64+0xf3/0x230 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x77/0x7f
+
+Freed by task 45:
+  kasan_save_stack mm/kasan/common.c:47 [inline]
+  kasan_save_track+0x3f/0x80 mm/kasan/common.c:68
+  kasan_save_free_info+0x40/0x50 mm/kasan/generic.c:579
+  poison_slab_object+0xe0/0x150 mm/kasan/common.c:240
+  __kasan_slab_free+0x37/0x60 mm/kasan/common.c:256
+  kasan_slab_free include/linux/kasan.h:184 [inline]
+  slab_free_hook mm/slub.c:2252 [inline]
+  slab_free mm/slub.c:4473 [inline]
+  kmem_cache_free+0x145/0x350 mm/slub.c:4548
+  dst_destroy+0x2ac/0x460 net/core/dst.c:124
+  rcu_do_batch kernel/rcu/tree.c:2569 [inline]
+  rcu_core+0xafd/0x1830 kernel/rcu/tree.c:2843
+  handle_softirqs+0x2c4/0x970 kernel/softirq.c:554
+  __do_softirq kernel/softirq.c:588 [inline]
+  invoke_softirq kernel/softirq.c:428 [inline]
+  __irq_exit_rcu+0xf4/0x1c0 kernel/softirq.c:637
+  irq_exit_rcu+0x9/0x30 kernel/softirq.c:649
+  instr_sysvec_apic_timer_interrupt arch/x86/kernel/apic/apic.c:1043 [inline]
+  sysvec_apic_timer_interrupt+0xa6/0xc0 arch/x86/kernel/apic/apic.c:1043
+  asm_sysvec_apic_timer_interrupt+0x1a/0x20 arch/x86/include/asm/idtentry.h:702
+
+Last potentially related work creation:
+  kasan_save_stack+0x3f/0x60 mm/kasan/common.c:47
+  __kasan_record_aux_stack+0xac/0xc0 mm/kasan/generic.c:541
+  __call_rcu_common kernel/rcu/tree.c:3106 [inline]
+  call_rcu+0x167/0xa70 kernel/rcu/tree.c:3210
+  refdst_drop include/net/dst.h:263 [inline]
+  skb_dst_drop include/net/dst.h:275 [inline]
+  nf_ct_frag6_queue net/ipv6/netfilter/nf_conntrack_reasm.c:306 [inline]
+  nf_ct_frag6_gather+0xb9a/0x2080 net/ipv6/netfilter/nf_conntrack_reasm.c:485
+  ipv6_defrag+0x2c8/0x3c0 net/ipv6/netfilter/nf_defrag_ipv6_hooks.c:67
+  nf_hook_entry_hookfn include/linux/netfilter.h:154 [inline]
+  nf_hook_slow+0xc3/0x220 net/netfilter/core.c:626
+  nf_hook include/linux/netfilter.h:269 [inline]
+  __ip6_local_out+0x6fa/0x800 net/ipv6/output_core.c:143
+  ip6_local_out+0x26/0x70 net/ipv6/output_core.c:153
+  ip6_send_skb+0x112/0x230 net/ipv6/ip6_output.c:1959
+  rawv6_push_pending_frames+0x75c/0x9e0 net/ipv6/raw.c:588
+  rawv6_sendmsg+0x19c7/0x23c0 net/ipv6/raw.c:926
+  sock_sendmsg_nosec net/socket.c:730 [inline]
+  __sock_sendmsg+0x1a6/0x270 net/socket.c:745
+  sock_write_iter+0x2dd/0x400 net/socket.c:1160
+ do_iter_readv_writev+0x60a/0x890
+
+Fixes: 0625491493d9 ("ipv6: ip6_push_pending_frames() should increment IPSTATS_MIB_OUTDISCARDS")
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Reported-by: syzbot <syzkaller@googlegroups.com>
+Reviewed-by: David Ahern <dsahern@kernel.org>
+Link: https://patch.msgid.link/20240820160859.3786976-2-edumazet@google.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/ipv6/ip6_output.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index b78940172d5b..4dc2204c6872 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -1747,6 +1747,7 @@ int ip6_send_skb(struct sk_buff *skb)
+ 	struct rt6_info *rt = (struct rt6_info *)skb_dst(skb);
+ 	int err;
+ 
++	rcu_read_lock();
+ 	err = ip6_local_out(net, skb->sk, skb);
+ 	if (err) {
+ 		if (err > 0)
+@@ -1756,6 +1757,7 @@ int ip6_send_skb(struct sk_buff *skb)
+ 				      IPSTATS_MIB_OUTDISCARDS);
+ 	}
+ 
++	rcu_read_unlock();
+ 	return err;
+ }
+ 
+-- 
+2.43.0
+
+
+From 63bd1118a5ffa413fc05e4210f475b9aa276399a Mon Sep 17 00:00:00 2001
+From: Chen Ridong <chenridong@huawei.com>
+Date: Fri, 28 Jun 2024 01:36:04 +0000
+Subject: [PATCH 58/70] cgroup/cpuset: Prevent UAF in proc_cpuset_show()
+
+commit 1be59c97c83ccd67a519d8a49486b3a8a73ca28a upstream.
+
+An UAF can happen when /proc/cpuset is read as reported in [1].
+
+This can be reproduced by the following methods:
+1.add an mdelay(1000) before acquiring the cgroup_lock In the
+ cgroup_path_ns function.
+2.$cat /proc/<pid>/cpuset   repeatly.
+3.$mount -t cgroup -o cpuset cpuset /sys/fs/cgroup/cpuset/
+$umount /sys/fs/cgroup/cpuset/   repeatly.
+
+The race that cause this bug can be shown as below:
+
+(umount)		|	(cat /proc/<pid>/cpuset)
+css_release		|	proc_cpuset_show
+css_release_work_fn	|	css = task_get_css(tsk, cpuset_cgrp_id);
+css_free_rwork_fn	|	cgroup_path_ns(css->cgroup, ...);
+cgroup_destroy_root	|	mutex_lock(&cgroup_mutex);
+rebind_subsystems	|
+cgroup_free_root 	|
+			|	// cgrp was freed, UAF
+			|	cgroup_path_ns_locked(cgrp,..);
+
+When the cpuset is initialized, the root node top_cpuset.css.cgrp
+will point to &cgrp_dfl_root.cgrp. In cgroup v1, the mount operation will
+allocate cgroup_root, and top_cpuset.css.cgrp will point to the allocated
+&cgroup_root.cgrp. When the umount operation is executed,
+top_cpuset.css.cgrp will be rebound to &cgrp_dfl_root.cgrp.
+
+The problem is that when rebinding to cgrp_dfl_root, there are cases
+where the cgroup_root allocated by setting up the root for cgroup v1
+is cached. This could lead to a Use-After-Free (UAF) if it is
+subsequently freed. The descendant cgroups of cgroup v1 can only be
+freed after the css is released. However, the css of the root will never
+be released, yet the cgroup_root should be freed when it is unmounted.
+This means that obtaining a reference to the css of the root does
+not guarantee that css.cgrp->root will not be freed.
+
+Fix this problem by using rcu_read_lock in proc_cpuset_show().
+As cgroup_root is kfree_rcu after commit d23b5c577715
+("cgroup: Make operations on the cgroup root_list RCU safe"),
+css->cgroup won't be freed during the critical section.
+To call cgroup_path_ns_locked, css_set_lock is needed, so it is safe to
+replace task_get_css with task_css.
+
+[1] https://syzkaller.appspot.com/bug?extid=9b1ff7be974a403aa4cd
+
+Fixes: a79a908fd2b0 ("cgroup: introduce cgroup namespaces")
+Signed-off-by: Chen Ridong <chenridong@huawei.com>
+Signed-off-by: Tejun Heo <tj@kernel.org>
+Signed-off-by: Shivani Agarwal <shivani.agarwal@broadcom.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ kernel/cgroup/cpuset.c | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/cgroup/cpuset.c b/kernel/cgroup/cpuset.c
+index 1b4af7127613..d242e5530905 100644
+--- a/kernel/cgroup/cpuset.c
++++ b/kernel/cgroup/cpuset.c
+@@ -22,6 +22,7 @@
+  *  distribution for more details.
+  */
+ 
++#include "cgroup-internal.h"
+ #include <linux/cpu.h>
+ #include <linux/cpumask.h>
+ #include <linux/cpuset.h>
+@@ -2952,10 +2953,14 @@ int proc_cpuset_show(struct seq_file *m, struct pid_namespace *ns,
+ 	if (!buf)
+ 		goto out;
+ 
+-	css = task_get_css(tsk, cpuset_cgrp_id);
+-	retval = cgroup_path_ns(css->cgroup, buf, PATH_MAX,
+-				current->nsproxy->cgroup_ns);
+-	css_put(css);
++	rcu_read_lock();
++	spin_lock_irq(&css_set_lock);
++	css = task_css(tsk, cpuset_cgrp_id);
++	retval = cgroup_path_ns_locked(css->cgroup, buf, PATH_MAX,
++				       current->nsproxy->cgroup_ns);
++	spin_unlock_irq(&css_set_lock);
++	rcu_read_unlock();
++
+ 	if (retval >= PATH_MAX)
+ 		retval = -ENAMETOOLONG;
+ 	if (retval < 0)
+-- 
+2.43.0
+
+
+From 4911b45608dd1071efb5f284aacbf8cd786f87da Mon Sep 17 00:00:00 2001
+From: Stephen Hemminger <stephen@networkplumber.org>
+Date: Sun, 1 Sep 2024 11:16:07 -0700
+Subject: [PATCH 59/70] sch/netem: fix use after free in netem_dequeue
+
+commit 3b3a2a9c6349e25a025d2330f479bc33a6ccb54a upstream.
+
+If netem_dequeue() enqueues packet to inner qdisc and that qdisc
+returns __NET_XMIT_STOLEN. The packet is dropped but
+qdisc_tree_reduce_backlog() is not called to update the parent's
+q.qlen, leading to the similar use-after-free as Commit
+e04991a48dbaf382 ("netem: fix return value if duplicate enqueue
+fails")
+
+Commands to trigger KASAN UaF:
+
+ip link add type dummy
+ip link set lo up
+ip link set dummy0 up
+tc qdisc add dev lo parent root handle 1: drr
+tc filter add dev lo parent 1: basic classid 1:1
+tc class add dev lo classid 1:1 drr
+tc qdisc add dev lo parent 1:1 handle 2: netem
+tc qdisc add dev lo parent 2: handle 3: drr
+tc filter add dev lo parent 3: basic classid 3:1 action mirred egress
+redirect dev dummy0
+tc class add dev lo classid 3:1 drr
+ping -c1 -W0.01 localhost # Trigger bug
+tc class del dev lo classid 1:1
+tc class add dev lo classid 1:1 drr
+ping -c1 -W0.01 localhost # UaF
+
+Fixes: 50612537e9ab ("netem: fix classful handling")
+Reported-by: Budimir Markovic <markovicbudimir@gmail.com>
+Signed-off-by: Stephen Hemminger <stephen@networkplumber.org>
+Link: https://patch.msgid.link/20240901182438.4992-1-stephen@networkplumber.org
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ net/sched/sch_netem.c | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/net/sched/sch_netem.c b/net/sched/sch_netem.c
+index 95f187035783..0dfe536d7637 100644
+--- a/net/sched/sch_netem.c
++++ b/net/sched/sch_netem.c
+@@ -660,11 +660,10 @@ static struct sk_buff *netem_dequeue(struct Qdisc *sch)
+ 
+ 				err = qdisc_enqueue(skb, q->qdisc, &to_free);
+ 				kfree_skb_list(to_free);
+-				if (err != NET_XMIT_SUCCESS &&
+-				    net_xmit_drop_count(err)) {
+-					qdisc_qstats_drop(sch);
+-					qdisc_tree_reduce_backlog(sch, 1,
+-								  pkt_len);
++				if (err != NET_XMIT_SUCCESS) {
++					if (net_xmit_drop_count(err))
++						qdisc_qstats_drop(sch);
++					qdisc_tree_reduce_backlog(sch, 1, pkt_len);
+ 				}
+ 				goto tfifo_dequeue;
+ 			}
+-- 
+2.43.0
+
+
+From 66633a8672b4bff52ee5f19936f09bc7dfda56ab Mon Sep 17 00:00:00 2001
+From: Jann Horn <jannh@google.com>
+Date: Mon, 19 Aug 2024 19:52:30 +0200
+Subject: [PATCH 60/70] fuse: use unsigned type for getxattr/listxattr size
+ truncation
+
+commit b18915248a15eae7d901262f108d6ff0ffb4ffc1 upstream.
+
+The existing code uses min_t(ssize_t, outarg.size, XATTR_LIST_MAX) when
+parsing the FUSE daemon's response to a zero-length getxattr/listxattr
+request.
+On 32-bit kernels, where ssize_t and outarg.size are the same size, this is
+wrong: The min_t() will pass through any size values that are negative when
+interpreted as signed.
+fuse_listxattr() will then return this userspace-supplied negative value,
+which callers will treat as an error value.
+
+This kind of bug pattern can lead to fairly bad security bugs because of
+how error codes are used in the Linux kernel. If a caller were to convert
+the numeric error into an error pointer, like so:
+
+    struct foo *func(...) {
+      int len = fuse_getxattr(..., NULL, 0);
+      if (len < 0)
+        return ERR_PTR(len);
+      ...
+    }
+
+then it would end up returning this userspace-supplied negative value cast
+to a pointer - but the caller of this function wouldn't recognize it as an
+error pointer (IS_ERR_VALUE() only detects values in the narrow range in
+which legitimate errno values are), and so it would just be treated as a
+kernel pointer.
+
+I think there is at least one theoretical codepath where this could happen,
+but that path would involve virtio-fs with submounts plus some weird
+SELinux configuration, so I think it's probably not a concern in practice.
+
+Cc: stable@vger.kernel.org # v4.9
+Fixes: 63401ccdb2ca ("fuse: limit xattr returned size")
+Signed-off-by: Jann Horn <jannh@google.com>
+Signed-off-by: Miklos Szeredi <mszeredi@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ fs/fuse/xattr.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/fs/fuse/xattr.c b/fs/fuse/xattr.c
+index 134bbc432ae6..6e4543e7cdff 100644
+--- a/fs/fuse/xattr.c
++++ b/fs/fuse/xattr.c
+@@ -79,7 +79,7 @@ ssize_t fuse_getxattr(struct inode *inode, const char *name, void *value,
+ 	}
+ 	ret = fuse_simple_request(fc, &args);
+ 	if (!ret && !size)
+-		ret = min_t(ssize_t, outarg.size, XATTR_SIZE_MAX);
++		ret = min_t(size_t, outarg.size, XATTR_SIZE_MAX);
+ 	if (ret == -ENOSYS) {
+ 		fc->no_getxattr = 1;
+ 		ret = -EOPNOTSUPP;
+@@ -141,7 +141,7 @@ ssize_t fuse_listxattr(struct dentry *entry, char *list, size_t size)
+ 	}
+ 	ret = fuse_simple_request(fc, &args);
+ 	if (!ret && !size)
+-		ret = min_t(ssize_t, outarg.size, XATTR_LIST_MAX);
++		ret = min_t(size_t, outarg.size, XATTR_LIST_MAX);
+ 	if (ret > 0 && size)
+ 		ret = fuse_verify_xattr_list(list, ret);
+ 	if (ret == -ENOSYS) {
+-- 
+2.43.0
+
+
+From 90b6f0d0867ba8e5eff7ee2fe04d337ae35af33b Mon Sep 17 00:00:00 2001
+From: Thadeu Lima de Souza Cascardo <cascardo@igalia.com>
+Date: Wed, 21 Aug 2024 12:23:24 -0300
+Subject: [PATCH 61/70] ext4: avoid OOB when system.data xattr changes
+ underneath the filesystem
+
+[ Upstream commit c6b72f5d82b1017bad80f9ebf502832fc321d796 ]
+
+When looking up for an entry in an inlined directory, if e_value_offs is
+changed underneath the filesystem by some change in the block device, it
+will lead to an out-of-bounds access that KASAN detects as an UAF.
+
+EXT4-fs (loop0): mounted filesystem 00000000-0000-0000-0000-000000000000 r/w without journal. Quota mode: none.
+loop0: detected capacity change from 2048 to 2047
+==================================================================
+BUG: KASAN: use-after-free in ext4_search_dir+0xf2/0x1c0 fs/ext4/namei.c:1500
+Read of size 1 at addr ffff88803e91130f by task syz-executor269/5103
+
+CPU: 0 UID: 0 PID: 5103 Comm: syz-executor269 Not tainted 6.11.0-rc4-syzkaller #0
+Hardware name: QEMU Standard PC (Q35 + ICH9, 2009), BIOS 1.16.3-debian-1.16.3-2~bpo12+1 04/01/2014
+Call Trace:
+ <TASK>
+ __dump_stack lib/dump_stack.c:93 [inline]
+ dump_stack_lvl+0x241/0x360 lib/dump_stack.c:119
+ print_address_description mm/kasan/report.c:377 [inline]
+ print_report+0x169/0x550 mm/kasan/report.c:488
+ kasan_report+0x143/0x180 mm/kasan/report.c:601
+ ext4_search_dir+0xf2/0x1c0 fs/ext4/namei.c:1500
+ ext4_find_inline_entry+0x4be/0x5e0 fs/ext4/inline.c:1697
+ __ext4_find_entry+0x2b4/0x1b30 fs/ext4/namei.c:1573
+ ext4_lookup_entry fs/ext4/namei.c:1727 [inline]
+ ext4_lookup+0x15f/0x750 fs/ext4/namei.c:1795
+ lookup_one_qstr_excl+0x11f/0x260 fs/namei.c:1633
+ filename_create+0x297/0x540 fs/namei.c:3980
+ do_symlinkat+0xf9/0x3a0 fs/namei.c:4587
+ __do_sys_symlinkat fs/namei.c:4610 [inline]
+ __se_sys_symlinkat fs/namei.c:4607 [inline]
+ __x64_sys_symlinkat+0x95/0xb0 fs/namei.c:4607
+ do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+ do_syscall_64+0xf3/0x230 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x77/0x7f
+RIP: 0033:0x7f3e73ced469
+Code: 28 00 00 00 75 05 48 83 c4 28 c3 e8 21 18 00 00 90 48 89 f8 48 89 f7 48 89 d6 48 89 ca 4d 89 c2 4d 89 c8 4c 8b 4c 24 08 0f 05 <48> 3d 01 f0 ff ff 73 01 c3 48 c7 c1 b8 ff ff ff f7 d8 64 89 01 48
+RSP: 002b:00007fff4d40c258 EFLAGS: 00000246 ORIG_RAX: 000000000000010a
+RAX: ffffffffffffffda RBX: 0032656c69662f2e RCX: 00007f3e73ced469
+RDX: 0000000020000200 RSI: 00000000ffffff9c RDI: 00000000200001c0
+RBP: 0000000000000000 R08: 00007fff4d40c290 R09: 00007fff4d40c290
+R10: 0023706f6f6c2f76 R11: 0000000000000246 R12: 00007fff4d40c27c
+R13: 0000000000000003 R14: 431bde82d7b634db R15: 00007fff4d40c2b0
+ </TASK>
+
+Calling ext4_xattr_ibody_find right after reading the inode with
+ext4_get_inode_loc will lead to a check of the validity of the xattrs,
+avoiding this problem.
+
+Reported-by: syzbot+0c2508114d912a54ee79@syzkaller.appspotmail.com
+Closes: https://syzkaller.appspot.com/bug?extid=0c2508114d912a54ee79
+Fixes: e8e948e7802a ("ext4: let ext4_find_entry handle inline data")
+Signed-off-by: Thadeu Lima de Souza Cascardo <cascardo@igalia.com>
+Link: https://patch.msgid.link/20240821152324.3621860-5-cascardo@igalia.com
+Signed-off-by: Theodore Ts'o <tytso@mit.edu>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ fs/ext4/inline.c | 31 +++++++++++++++++++++----------
+ 1 file changed, 21 insertions(+), 10 deletions(-)
+
+diff --git a/fs/ext4/inline.c b/fs/ext4/inline.c
+index 215f17c135ac..a9714ac86ddf 100644
+--- a/fs/ext4/inline.c
++++ b/fs/ext4/inline.c
+@@ -1678,25 +1678,36 @@ struct buffer_head *ext4_find_inline_entry(struct inode *dir,
+ 					struct ext4_dir_entry_2 **res_dir,
+ 					int *has_inline_data)
+ {
++	struct ext4_xattr_ibody_find is = {
++		.s = { .not_found = -ENODATA, },
++	};
++	struct ext4_xattr_info i = {
++		.name_index = EXT4_XATTR_INDEX_SYSTEM,
++		.name = EXT4_XATTR_SYSTEM_DATA,
++	};
+ 	int ret;
+-	struct ext4_iloc iloc;
+ 	void *inline_start;
+ 	int inline_size;
+ 
+-	ret = ext4_get_inode_loc(dir, &iloc);
++	ret = ext4_get_inode_loc(dir, &is.iloc);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+ 	down_read(&EXT4_I(dir)->xattr_sem);
++
++	ret = ext4_xattr_ibody_find(dir, &i, &is);
++	if (ret)
++		goto out;
++
+ 	if (!ext4_has_inline_data(dir)) {
+ 		*has_inline_data = 0;
+ 		goto out;
+ 	}
+ 
+-	inline_start = (void *)ext4_raw_inode(&iloc)->i_block +
++	inline_start = (void *)ext4_raw_inode(&is.iloc)->i_block +
+ 						EXT4_INLINE_DOTDOT_SIZE;
+ 	inline_size = EXT4_MIN_INLINE_DATA_SIZE - EXT4_INLINE_DOTDOT_SIZE;
+-	ret = ext4_search_dir(iloc.bh, inline_start, inline_size,
++	ret = ext4_search_dir(is.iloc.bh, inline_start, inline_size,
+ 			      dir, fname, 0, res_dir);
+ 	if (ret == 1)
+ 		goto out_find;
+@@ -1706,23 +1717,23 @@ struct buffer_head *ext4_find_inline_entry(struct inode *dir,
+ 	if (ext4_get_inline_size(dir) == EXT4_MIN_INLINE_DATA_SIZE)
+ 		goto out;
+ 
+-	inline_start = ext4_get_inline_xattr_pos(dir, &iloc);
++	inline_start = ext4_get_inline_xattr_pos(dir, &is.iloc);
+ 	inline_size = ext4_get_inline_size(dir) - EXT4_MIN_INLINE_DATA_SIZE;
+ 
+-	ret = ext4_search_dir(iloc.bh, inline_start, inline_size,
++	ret = ext4_search_dir(is.iloc.bh, inline_start, inline_size,
+ 			      dir, fname, 0, res_dir);
+ 	if (ret == 1)
+ 		goto out_find;
+ 
+ out:
+-	brelse(iloc.bh);
++	brelse(is.iloc.bh);
+ 	if (ret < 0)
+-		iloc.bh = ERR_PTR(ret);
++		is.iloc.bh = ERR_PTR(ret);
+ 	else
+-		iloc.bh = NULL;
++		is.iloc.bh = NULL;
+ out_find:
+ 	up_read(&EXT4_I(dir)->xattr_sem);
+-	return iloc.bh;
++	return is.iloc.bh;
+ }
+ 
+ int ext4_delete_inline_entry(handle_t *handle,
+-- 
+2.43.0
+
+
+From d3dbb9a3589e11c2efd75b46392ae0c8b071666b Mon Sep 17 00:00:00 2001
+From: Julian Sun <sunjunchao2870@gmail.com>
+Date: Fri, 23 Aug 2024 21:07:30 +0800
+Subject: [PATCH 62/70] vfs: fix race between evice_inodes() and
+ find_inode()&iput()
+
+commit 88b1afbf0f6b221f6c5bb66cc80cd3b38d696687 upstream.
+
+Hi, all
+
+Recently I noticed a bug[1] in btrfs, after digged it into
+and I believe it'a race in vfs.
+
+Let's assume there's a inode (ie ino 261) with i_count 1 is
+called by iput(), and there's a concurrent thread calling
+generic_shutdown_super().
+
+cpu0:                              cpu1:
+iput() // i_count is 1
+  ->spin_lock(inode)
+  ->dec i_count to 0
+  ->iput_final()                    generic_shutdown_super()
+    ->__inode_add_lru()               ->evict_inodes()
+      // cause some reason[2]           ->if (atomic_read(inode->i_count)) continue;
+      // return before                  // inode 261 passed the above check
+      // list_lru_add_obj()             // and then schedule out
+   ->spin_unlock()
+// note here: the inode 261
+// was still at sb list and hash list,
+// and I_FREEING|I_WILL_FREE was not been set
+
+btrfs_iget()
+  // after some function calls
+  ->find_inode()
+    // found the above inode 261
+    ->spin_lock(inode)
+   // check I_FREEING|I_WILL_FREE
+   // and passed
+      ->__iget()
+    ->spin_unlock(inode)                // schedule back
+                                        ->spin_lock(inode)
+                                        // check (I_NEW|I_FREEING|I_WILL_FREE) flags,
+                                        // passed and set I_FREEING
+iput()                                  ->spin_unlock(inode)
+  ->spin_lock(inode)			  ->evict()
+  // dec i_count to 0
+  ->iput_final()
+    ->spin_unlock()
+    ->evict()
+
+Now, we have two threads simultaneously evicting
+the same inode, which may trigger the BUG(inode->i_state & I_CLEAR)
+statement both within clear_inode() and iput().
+
+To fix the bug, recheck the inode->i_count after holding i_lock.
+Because in the most scenarios, the first check is valid, and
+the overhead of spin_lock() can be reduced.
+
+If there is any misunderstanding, please let me know, thanks.
+
+[1]: https://lore.kernel.org/linux-btrfs/000000000000eabe1d0619c48986@google.com/
+[2]: The reason might be 1. SB_ACTIVE was removed or 2. mapping_shrinkable()
+return false when I reproduced the bug.
+
+Reported-by: syzbot+67ba3c42bcbb4665d3ad@syzkaller.appspotmail.com
+Closes: https://syzkaller.appspot.com/bug?extid=67ba3c42bcbb4665d3ad
+CC: stable@vger.kernel.org
+Fixes: 63997e98a3be ("split invalidate_inodes()")
+Signed-off-by: Julian Sun <sunjunchao2870@gmail.com>
+Link: https://lore.kernel.org/r/20240823130730.658881-1-sunjunchao2870@gmail.com
+Reviewed-by: Jan Kara <jack@suse.cz>
+Signed-off-by: Christian Brauner <brauner@kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ fs/inode.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/fs/inode.c b/fs/inode.c
+index 8c91cfd52f57..5f3620056a56 100644
+--- a/fs/inode.c
++++ b/fs/inode.c
+@@ -625,6 +625,10 @@ void evict_inodes(struct super_block *sb)
+ 			continue;
+ 
+ 		spin_lock(&inode->i_lock);
++		if (atomic_read(&inode->i_count)) {
++			spin_unlock(&inode->i_lock);
++			continue;
++		}
+ 		if (inode->i_state & (I_NEW | I_FREEING | I_WILL_FREE)) {
+ 			spin_unlock(&inode->i_lock);
+ 			continue;
+-- 
+2.43.0
+
+
+From a0e64af345febf759aeb9d249886b2563301818f Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Wed, 9 Oct 2024 18:58:02 +0000
+Subject: [PATCH 63/70] ppp: fix ppp_async_encode() illegal access
+
+[ Upstream commit 40dddd4b8bd08a69471efd96107a4e1c73fabefc ]
+
+syzbot reported an issue in ppp_async_encode() [1]
+
+In this case, pppoe_sendmsg() is called with a zero size.
+Then ppp_async_encode() is called with an empty skb.
+
+BUG: KMSAN: uninit-value in ppp_async_encode drivers/net/ppp/ppp_async.c:545 [inline]
+ BUG: KMSAN: uninit-value in ppp_async_push+0xb4f/0x2660 drivers/net/ppp/ppp_async.c:675
+  ppp_async_encode drivers/net/ppp/ppp_async.c:545 [inline]
+  ppp_async_push+0xb4f/0x2660 drivers/net/ppp/ppp_async.c:675
+  ppp_async_send+0x130/0x1b0 drivers/net/ppp/ppp_async.c:634
+  ppp_channel_bridge_input drivers/net/ppp/ppp_generic.c:2280 [inline]
+  ppp_input+0x1f1/0xe60 drivers/net/ppp/ppp_generic.c:2304
+  pppoe_rcv_core+0x1d3/0x720 drivers/net/ppp/pppoe.c:379
+  sk_backlog_rcv+0x13b/0x420 include/net/sock.h:1113
+  __release_sock+0x1da/0x330 net/core/sock.c:3072
+  release_sock+0x6b/0x250 net/core/sock.c:3626
+  pppoe_sendmsg+0x2b8/0xb90 drivers/net/ppp/pppoe.c:903
+  sock_sendmsg_nosec net/socket.c:729 [inline]
+  __sock_sendmsg+0x30f/0x380 net/socket.c:744
+  ____sys_sendmsg+0x903/0xb60 net/socket.c:2602
+  ___sys_sendmsg+0x28d/0x3c0 net/socket.c:2656
+  __sys_sendmmsg+0x3c1/0x960 net/socket.c:2742
+  __do_sys_sendmmsg net/socket.c:2771 [inline]
+  __se_sys_sendmmsg net/socket.c:2768 [inline]
+  __x64_sys_sendmmsg+0xbc/0x120 net/socket.c:2768
+  x64_sys_call+0xb6e/0x3ba0 arch/x86/include/generated/asm/syscalls_64.h:308
+  do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+  do_syscall_64+0xcd/0x1e0 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x77/0x7f
+
+Uninit was created at:
+  slab_post_alloc_hook mm/slub.c:4092 [inline]
+  slab_alloc_node mm/slub.c:4135 [inline]
+  kmem_cache_alloc_node_noprof+0x6bf/0xb80 mm/slub.c:4187
+  kmalloc_reserve+0x13d/0x4a0 net/core/skbuff.c:587
+  __alloc_skb+0x363/0x7b0 net/core/skbuff.c:678
+  alloc_skb include/linux/skbuff.h:1322 [inline]
+  sock_wmalloc+0xfe/0x1a0 net/core/sock.c:2732
+  pppoe_sendmsg+0x3a7/0xb90 drivers/net/ppp/pppoe.c:867
+  sock_sendmsg_nosec net/socket.c:729 [inline]
+  __sock_sendmsg+0x30f/0x380 net/socket.c:744
+  ____sys_sendmsg+0x903/0xb60 net/socket.c:2602
+  ___sys_sendmsg+0x28d/0x3c0 net/socket.c:2656
+  __sys_sendmmsg+0x3c1/0x960 net/socket.c:2742
+  __do_sys_sendmmsg net/socket.c:2771 [inline]
+  __se_sys_sendmmsg net/socket.c:2768 [inline]
+  __x64_sys_sendmmsg+0xbc/0x120 net/socket.c:2768
+  x64_sys_call+0xb6e/0x3ba0 arch/x86/include/generated/asm/syscalls_64.h:308
+  do_syscall_x64 arch/x86/entry/common.c:52 [inline]
+  do_syscall_64+0xcd/0x1e0 arch/x86/entry/common.c:83
+ entry_SYSCALL_64_after_hwframe+0x77/0x7f
+
+CPU: 1 UID: 0 PID: 5411 Comm: syz.1.14 Not tainted 6.12.0-rc1-syzkaller-00165-g360c1f1f24c6 #0
+Hardware name: Google Google Compute Engine/Google Compute Engine, BIOS Google 09/13/2024
+
+Fixes: 1da177e4c3f4 ("Linux-2.6.12-rc2")
+Reported-by: syzbot+1d121645899e7692f92a@syzkaller.appspotmail.com
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Reviewed-by: Simon Horman <horms@kernel.org>
+Link: https://patch.msgid.link/20241009185802.3763282-1-edumazet@google.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/net/ppp/ppp_async.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/ppp/ppp_async.c b/drivers/net/ppp/ppp_async.c
+index 7172dd35f619..968375587cb8 100644
+--- a/drivers/net/ppp/ppp_async.c
++++ b/drivers/net/ppp/ppp_async.c
+@@ -555,7 +555,7 @@ ppp_async_encode(struct asyncppp *ap)
+ 	 * and 7 (code-reject) must be sent as though no options
+ 	 * had been negotiated.
+ 	 */
+-	islcp = proto == PPP_LCP && 1 <= data[2] && data[2] <= 7;
++	islcp = proto == PPP_LCP && count >= 3 && 1 <= data[2] && data[2] <= 7;
+ 
+ 	if (i == 0) {
+ 		if (islcp)
+-- 
+2.43.0
+
+
+From 5f9462a735f437b4e04b078a5b40c6fd21d89f62 Mon Sep 17 00:00:00 2001
+From: Mark Rutland <mark.rutland@arm.com>
+Date: Tue, 8 Oct 2024 16:58:46 +0100
+Subject: [PATCH 64/70] arm64: probes: Remove broken LDR (literal) uprobe
+ support
+
+commit acc450aa07099d071b18174c22a1119c57da8227 upstream.
+
+The simulate_ldr_literal() and simulate_ldrsw_literal() functions are
+unsafe to use for uprobes. Both functions were originally written for
+use with kprobes, and access memory with plain C accesses. When uprobes
+was added, these were reused unmodified even though they cannot safely
+access user memory.
+
+There are three key problems:
+
+1) The plain C accesses do not have corresponding extable entries, and
+   thus if they encounter a fault the kernel will treat these as
+   unintentional accesses to user memory, resulting in a BUG() which
+   will kill the kernel thread, and likely lead to further issues (e.g.
+   lockup or panic()).
+
+2) The plain C accesses are subject to HW PAN and SW PAN, and so when
+   either is in use, any attempt to simulate an access to user memory
+   will fault. Thus neither simulate_ldr_literal() nor
+   simulate_ldrsw_literal() can do anything useful when simulating a
+   user instruction on any system with HW PAN or SW PAN.
+
+3) The plain C accesses are privileged, as they run in kernel context,
+   and in practice can access a small range of kernel virtual addresses.
+   The instructions they simulate have a range of +/-1MiB, and since the
+   simulated instructions must itself be a user instructions in the
+   TTBR0 address range, these can address the final 1MiB of the TTBR1
+   acddress range by wrapping downwards from an address in the first
+   1MiB of the TTBR0 address range.
+
+   In contemporary kernels the last 8MiB of TTBR1 address range is
+   reserved, and accesses to this will always fault, meaning this is no
+   worse than (1).
+
+   Historically, it was theoretically possible for the linear map or
+   vmemmap to spill into the final 8MiB of the TTBR1 address range, but
+   in practice this is extremely unlikely to occur as this would
+   require either:
+
+   * Having enough physical memory to fill the entire linear map all the
+     way to the final 1MiB of the TTBR1 address range.
+
+   * Getting unlucky with KASLR randomization of the linear map such
+     that the populated region happens to overlap with the last 1MiB of
+     the TTBR address range.
+
+   ... and in either case if we were to spill into the final page there
+   would be larger problems as the final page would alias with error
+   pointers.
+
+Practically speaking, (1) and (2) are the big issues. Given there have
+been no reports of problems since the broken code was introduced, it
+appears that no-one is relying on probing these instructions with
+uprobes.
+
+Avoid these issues by not allowing uprobes on LDR (literal) and LDRSW
+(literal), limiting the use of simulate_ldr_literal() and
+simulate_ldrsw_literal() to kprobes. Attempts to place uprobes on LDR
+(literal) and LDRSW (literal) will be rejected as
+arm_probe_decode_insn() will return INSN_REJECTED. In future we can
+consider introducing working uprobes support for these instructions, but
+this will require more significant work.
+
+Fixes: 9842ceae9fa8 ("arm64: Add uprobe support")
+Cc: stable@vger.kernel.org
+Signed-off-by: Mark Rutland <mark.rutland@arm.com>
+Cc: Catalin Marinas <catalin.marinas@arm.com>
+Cc: Will Deacon <will@kernel.org>
+Link: https://lore.kernel.org/r/20241008155851.801546-2-mark.rutland@arm.com
+Signed-off-by: Will Deacon <will@kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ arch/arm64/kernel/probes/decode-insn.c | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm64/kernel/probes/decode-insn.c b/arch/arm64/kernel/probes/decode-insn.c
+index 6bf6657a5a52..3d0684b72839 100644
+--- a/arch/arm64/kernel/probes/decode-insn.c
++++ b/arch/arm64/kernel/probes/decode-insn.c
+@@ -104,10 +104,6 @@ arm_probe_decode_insn(probe_opcode_t insn, struct arch_probe_insn *api)
+ 	    aarch64_insn_is_blr(insn) ||
+ 	    aarch64_insn_is_ret(insn)) {
+ 		api->handler = simulate_br_blr_ret;
+-	} else if (aarch64_insn_is_ldr_lit(insn)) {
+-		api->handler = simulate_ldr_literal;
+-	} else if (aarch64_insn_is_ldrsw_lit(insn)) {
+-		api->handler = simulate_ldrsw_literal;
+ 	} else {
+ 		/*
+ 		 * Instruction cannot be stepped out-of-line and we don't
+@@ -145,6 +141,17 @@ arm_kprobe_decode_insn(kprobe_opcode_t *addr, struct arch_specific_insn *asi)
+ 	probe_opcode_t insn = le32_to_cpu(*addr);
+ 	probe_opcode_t *scan_end = NULL;
+ 	unsigned long size = 0, offset = 0;
++	struct arch_probe_insn *api = &asi->api;
++
++	if (aarch64_insn_is_ldr_lit(insn)) {
++		api->handler = simulate_ldr_literal;
++		decoded = INSN_GOOD_NO_SLOT;
++	} else if (aarch64_insn_is_ldrsw_lit(insn)) {
++		api->handler = simulate_ldrsw_literal;
++		decoded = INSN_GOOD_NO_SLOT;
++	} else {
++		decoded = arm_probe_decode_insn(insn, &asi->api);
++	}
+ 
+ 	/*
+ 	 * If there's a symbol defined in front of and near enough to
+@@ -162,7 +169,6 @@ arm_kprobe_decode_insn(kprobe_opcode_t *addr, struct arch_specific_insn *asi)
+ 		else
+ 			scan_end = addr - MAX_ATOMIC_CONTEXT_SIZE;
+ 	}
+-	decoded = arm_probe_decode_insn(insn, &asi->api);
+ 
+ 	if (decoded != INSN_REJECTED && scan_end)
+ 		if (is_probed_address_atomic(addr - 1, scan_end))
+-- 
+2.43.0
+
+
+From 4bd467445d1b0a48e2277c32fb54a79ea53833e9 Mon Sep 17 00:00:00 2001
+From: Mark Rutland <mark.rutland@arm.com>
+Date: Tue, 8 Oct 2024 16:58:47 +0100
+Subject: [PATCH 65/70] arm64: probes: Fix simulate_ldr*_literal()
+
+commit 50f813e57601c22b6f26ced3193b9b94d70a2640 upstream.
+
+The simulate_ldr_literal() code always loads a 64-bit quantity, and when
+simulating a 32-bit load into a 'W' register, it discards the most
+significant 32 bits. For big-endian kernels this means that the relevant
+bits are discarded, and the value returned is the the subsequent 32 bits
+in memory (i.e. the value at addr + 4).
+
+Additionally, simulate_ldr_literal() and simulate_ldrsw_literal() use a
+plain C load, which the compiler may tear or elide (e.g. if the target
+is the zero register). Today this doesn't happen to matter, but it may
+matter in future if trampoline code uses a LDR (literal) or LDRSW
+(literal).
+
+Update simulate_ldr_literal() and simulate_ldrsw_literal() to use an
+appropriately-sized READ_ONCE() to perform the access, which avoids
+these problems.
+
+Fixes: 39a67d49ba35 ("arm64: kprobes instruction simulation support")
+Cc: stable@vger.kernel.org
+Signed-off-by: Mark Rutland <mark.rutland@arm.com>
+Cc: Catalin Marinas <catalin.marinas@arm.com>
+Cc: Will Deacon <will@kernel.org>
+Link: https://lore.kernel.org/r/20241008155851.801546-3-mark.rutland@arm.com
+Signed-off-by: Will Deacon <will@kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ arch/arm64/kernel/probes/simulate-insn.c | 18 +++++++-----------
+ 1 file changed, 7 insertions(+), 11 deletions(-)
+
+diff --git a/arch/arm64/kernel/probes/simulate-insn.c b/arch/arm64/kernel/probes/simulate-insn.c
+index be05868418ee..a98699948cb2 100644
+--- a/arch/arm64/kernel/probes/simulate-insn.c
++++ b/arch/arm64/kernel/probes/simulate-insn.c
+@@ -178,17 +178,15 @@ simulate_tbz_tbnz(u32 opcode, long addr, struct pt_regs *regs)
+ void __kprobes
+ simulate_ldr_literal(u32 opcode, long addr, struct pt_regs *regs)
+ {
+-	u64 *load_addr;
++	unsigned long load_addr;
+ 	int xn = opcode & 0x1f;
+-	int disp;
+ 
+-	disp = ldr_displacement(opcode);
+-	load_addr = (u64 *) (addr + disp);
++	load_addr = addr + ldr_displacement(opcode);
+ 
+ 	if (opcode & (1 << 30))	/* x0-x30 */
+-		set_x_reg(regs, xn, *load_addr);
++		set_x_reg(regs, xn, READ_ONCE(*(u64 *)load_addr));
+ 	else			/* w0-w30 */
+-		set_w_reg(regs, xn, *load_addr);
++		set_w_reg(regs, xn, READ_ONCE(*(u32 *)load_addr));
+ 
+ 	instruction_pointer_set(regs, instruction_pointer(regs) + 4);
+ }
+@@ -196,14 +194,12 @@ simulate_ldr_literal(u32 opcode, long addr, struct pt_regs *regs)
+ void __kprobes
+ simulate_ldrsw_literal(u32 opcode, long addr, struct pt_regs *regs)
+ {
+-	s32 *load_addr;
++	unsigned long load_addr;
+ 	int xn = opcode & 0x1f;
+-	int disp;
+ 
+-	disp = ldr_displacement(opcode);
+-	load_addr = (s32 *) (addr + disp);
++	load_addr = addr + ldr_displacement(opcode);
+ 
+-	set_x_reg(regs, xn, *load_addr);
++	set_x_reg(regs, xn, READ_ONCE(*(s32 *)load_addr));
+ 
+ 	instruction_pointer_set(regs, instruction_pointer(regs) + 4);
+ }
+-- 
+2.43.0
+
+
+From fe3372a589d187b9efcc4fa42550d5ebdcddfe29 Mon Sep 17 00:00:00 2001
+From: Mathias Nyman <mathias.nyman@linux.intel.com>
+Date: Wed, 16 Oct 2024 16:59:57 +0300
+Subject: [PATCH 66/70] xhci: Fix incorrect stream context type macro
+
+commit 6599b6a6fa8060145046d0744456b6abdb3122a7 upstream.
+
+The stream contex type (SCT) bitfield is used both in the stream context
+data structure,  and in the 'Set TR Dequeue pointer' command TRB.
+In both cases it uses bits 3:1
+
+The SCT_FOR_TRB(p) macro used to set the stream context type (SCT) field
+for the 'Set TR Dequeue pointer' command TRB incorrectly shifts the value
+1 bit left before masking the three bits.
+
+Fix this by first masking and rshifting, just like the similar
+SCT_FOR_CTX(p) macro does
+
+This issue has not been visibile as the lost bit 3 is only used with
+secondary stream arrays (SSA). Xhci driver currently only supports using
+a primary stream array with Linear stream addressing.
+
+Fixes: 95241dbdf828 ("xhci: Set SCT field for Set TR dequeue on streams")
+Cc: stable@vger.kernel.org
+Signed-off-by: Mathias Nyman <mathias.nyman@linux.intel.com>
+Link: https://lore.kernel.org/r/20241016140000.783905-2-mathias.nyman@linux.intel.com
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ drivers/usb/host/xhci.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/usb/host/xhci.h b/drivers/usb/host/xhci.h
+index 196f649c57c3..0b14c8a77169 100644
+--- a/drivers/usb/host/xhci.h
++++ b/drivers/usb/host/xhci.h
+@@ -1262,7 +1262,7 @@ enum xhci_setup_dev {
+ /* Set TR Dequeue Pointer command TRB fields, 6.4.3.9 */
+ #define TRB_TO_STREAM_ID(p)		((((p) & (0xffff << 16)) >> 16))
+ #define STREAM_ID_FOR_TRB(p)		((((p)) & 0xffff) << 16)
+-#define SCT_FOR_TRB(p)			(((p) << 1) & 0x7)
++#define SCT_FOR_TRB(p)			(((p) & 0x7) << 1)
+ 
+ /* Link TRB specific fields */
+ #define TRB_TC			(1<<1)
+-- 
+2.43.0
+
+
+From 1d7f4938e453e680856ec3055fa98cedbdc0b9ec Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Beno=C3=AEt=20Monin?= <benoit.monin@gmx.fr>
+Date: Thu, 24 Oct 2024 16:01:54 +0200
+Subject: [PATCH 67/70] net: skip offload for NETIF_F_IPV6_CSUM if ipv6 header
+ contains extension
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+[ Upstream commit 04c20a9356f283da623903e81e7c6d5df7e4dc3c ]
+
+As documented in skbuff.h, devices with NETIF_F_IPV6_CSUM capability
+can only checksum TCP and UDP over IPv6 if the IP header does not
+contains extension.
+
+This is enforced for UDP packets emitted from user-space to an IPv6
+address as they go through ip6_make_skb(), which calls
+__ip6_append_data() where a check is done on the header size before
+setting CHECKSUM_PARTIAL.
+
+But the introduction of UDP encapsulation with fou6 added a code-path
+where it is possible to get an skb with a partial UDP checksum and an
+IPv6 header with extension:
+* fou6 adds a UDP header with a partial checksum if the inner packet
+does not contains a valid checksum.
+* ip6_tunnel adds an IPv6 header with a destination option extension
+header if encap_limit is non-zero (the default value is 4).
+
+The thread linked below describes in more details how to reproduce the
+problem with GRE-in-UDP tunnel.
+
+Add a check on the network header size in skb_csum_hwoffload_help() to
+make sure no IPv6 packet with extension header is handed to a network
+device with NETIF_F_IPV6_CSUM capability.
+
+Link: https://lore.kernel.org/netdev/26548921.1r3eYUQgxm@benoit.monin/T/#u
+Fixes: aa3463d65e7b ("fou: Add encap ops for IPv6 tunnels")
+Signed-off-by: Benoît Monin <benoit.monin@gmx.fr>
+Reviewed-by: Willem de Bruijn <willemb@google.com>
+Link: https://patch.msgid.link/5fbeecfc311ea182aa1d1c771725ab8b4cac515e.1729778144.git.benoit.monin@gmx.fr
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/core/dev.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index b1ac343516bf..c76972c2e441 100755
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -3254,6 +3254,9 @@ int skb_csum_hwoffload_help(struct sk_buff *skb,
+ 		return 0;
+ 
+ 	if (features & (NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM)) {
++		if (vlan_get_protocol(skb) == htons(ETH_P_IPV6) &&
++		    skb_network_header_len(skb) != sizeof(struct ipv6hdr))
++			goto sw_checksum;
+ 		switch (skb->csum_offset) {
+ 		case offsetof(struct tcphdr, check):
+ 		case offsetof(struct udphdr, check):
+@@ -3261,6 +3264,7 @@ int skb_csum_hwoffload_help(struct sk_buff *skb,
+ 		}
+ 	}
+ 
++sw_checksum:
+ 	return skb_checksum_help(skb);
+ }
+ EXPORT_SYMBOL(skb_csum_hwoffload_help);
+-- 
+2.43.0
+
+
+From 27537da7ee3db2e58a2bfcf3112e5ba698c88e39 Mon Sep 17 00:00:00 2001
+From: Jiri Kosina <jkosina@suse.com>
+Date: Tue, 29 Oct 2024 15:44:35 +0100
+Subject: [PATCH 68/70] HID: core: zero-initialize the report buffer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+[ Upstream commit 177f25d1292c7e16e1199b39c85480f7f8815552 ]
+
+Since the report buffer is used by all kinds of drivers in various ways, let's
+zero-initialize it during allocation to make sure that it can't be ever used
+to leak kernel memory via specially-crafted report.
+
+Fixes: 27ce405039bf ("HID: fix data access in implement()")
+Reported-by: Benoît Sevens <bsevens@google.com>
+Acked-by: Benjamin Tissoires <bentiss@kernel.org>
+Signed-off-by: Jiri Kosina <jkosina@suse.com>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/hid/hid-core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/hid/hid-core.c b/drivers/hid/hid-core.c
+index 796a9e833f4e..7c740d950379 100644
+--- a/drivers/hid/hid-core.c
++++ b/drivers/hid/hid-core.c
+@@ -1486,7 +1486,7 @@ u8 *hid_alloc_report_buf(struct hid_report *report, gfp_t flags)
+ 
+ 	u32 len = hid_report_len(report) + 7;
+ 
+-	return kmalloc(len, flags);
++	return kzalloc(len, flags);
+ }
+ EXPORT_SYMBOL_GPL(hid_alloc_report_buf);
+ 
+-- 
+2.43.0
+
+
+From f8a657b5248415a43f099eef5ece504c9ebe9565 Mon Sep 17 00:00:00 2001
+From: Ming-Hung Tsai <mtsai@redhat.com>
+Date: Tue, 22 Oct 2024 15:13:16 +0800
+Subject: [PATCH 69/70] dm cache: fix out-of-bounds access to the dirty bitset
+ when resizing
+
+commit 792227719725497ce10a8039803bec13f89f8910 upstream.
+
+dm-cache checks the dirty bits of the cache blocks to be dropped when
+shrinking the fast device, but an index bug in bitset iteration causes
+out-of-bounds access.
+
+Reproduce steps:
+
+1. create a cache device of 1024 cache blocks (128 bytes dirty bitset)
+
+dmsetup create cmeta --table "0 8192 linear /dev/sdc 0"
+dmsetup create cdata --table "0 131072 linear /dev/sdc 8192"
+dmsetup create corig --table "0 524288 linear /dev/sdc 262144"
+dd if=/dev/zero of=/dev/mapper/cmeta bs=4k count=1 oflag=direct
+dmsetup create cache --table "0 524288 cache /dev/mapper/cmeta \
+/dev/mapper/cdata /dev/mapper/corig 128 2 metadata2 writethrough smq 0"
+
+2. shrink the fast device to 512 cache blocks, triggering out-of-bounds
+   access to the dirty bitset (offset 0x80)
+
+dmsetup suspend cache
+dmsetup reload cdata --table "0 65536 linear /dev/sdc 8192"
+dmsetup resume cdata
+dmsetup resume cache
+
+KASAN reports:
+
+  BUG: KASAN: vmalloc-out-of-bounds in cache_preresume+0x269/0x7b0
+  Read of size 8 at addr ffffc900000f3080 by task dmsetup/131
+
+  (...snip...)
+  The buggy address belongs to the virtual mapping at
+   [ffffc900000f3000, ffffc900000f5000) created by:
+   cache_ctr+0x176a/0x35f0
+
+  (...snip...)
+  Memory state around the buggy address:
+   ffffc900000f2f80: f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8
+   ffffc900000f3000: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  >ffffc900000f3080: f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8
+                     ^
+   ffffc900000f3100: f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8
+   ffffc900000f3180: f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8 f8
+
+Fix by making the index post-incremented.
+
+Signed-off-by: Ming-Hung Tsai <mtsai@redhat.com>
+Fixes: f494a9c6b1b6 ("dm cache: cache shrinking support")
+Cc: stable@vger.kernel.org
+Signed-off-by: Mikulas Patocka <mpatocka@redhat.com>
+Acked-by: Joe Thornber <thornber@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ drivers/md/dm-cache-target.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/md/dm-cache-target.c b/drivers/md/dm-cache-target.c
+index 590aff275acb..3790c5689133 100644
+--- a/drivers/md/dm-cache-target.c
++++ b/drivers/md/dm-cache-target.c
+@@ -3054,13 +3054,13 @@ static bool can_resize(struct cache *cache, dm_cblock_t new_size)
+ 	 * We can't drop a dirty block when shrinking the cache.
+ 	 */
+ 	while (from_cblock(new_size) < from_cblock(cache->cache_size)) {
+-		new_size = to_cblock(from_cblock(new_size) + 1);
+ 		if (is_dirty(cache, new_size)) {
+ 			DMERR("%s: unable to shrink cache; cache block %llu is dirty",
+ 			      cache_device_name(cache),
+ 			      (unsigned long long) from_cblock(new_size));
+ 			return false;
+ 		}
++		new_size = to_cblock(from_cblock(new_size) + 1);
+ 	}
+ 
+ 	return true;
+-- 
+2.43.0
+
+
+From ea289251c561f772cbf715b96c415a8b3103d7ee Mon Sep 17 00:00:00 2001
+From: Hyunwoo Kim <v4bel@theori.io>
+Date: Tue, 22 Oct 2024 09:32:56 +0200
+Subject: [PATCH 70/70] vsock/virtio: Initialization of the dangling pointer
+ occurring in vsk->trans
+
+commit 6ca575374dd9a507cdd16dfa0e78c2e9e20bd05f upstream.
+
+During loopback communication, a dangling pointer can be created in
+vsk->trans, potentially leading to a Use-After-Free condition.  This
+issue is resolved by initializing vsk->trans to NULL.
+
+Cc: stable <stable@kernel.org>
+Fixes: 06a8fc78367d ("VSOCK: Introduce virtio_vsock_common.ko")
+Signed-off-by: Hyunwoo Kim <v4bel@theori.io>
+Signed-off-by: Wongi Lee <qwerty@theori.io>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+Message-Id: <2024102245-strive-crib-c8d3@gregkh>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ net/vmw_vsock/virtio_transport_common.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/net/vmw_vsock/virtio_transport_common.c b/net/vmw_vsock/virtio_transport_common.c
+index 49921077ce93..71ea991bab71 100644
+--- a/net/vmw_vsock/virtio_transport_common.c
++++ b/net/vmw_vsock/virtio_transport_common.c
+@@ -650,6 +650,7 @@ void virtio_transport_destruct(struct vsock_sock *vsk)
+ 	struct virtio_vsock_sock *vvs = vsk->trans;
+ 
+ 	kfree(vvs);
++	vsk->trans = NULL;
+ }
+ EXPORT_SYMBOL_GPL(virtio_transport_destruct);
+ 
+-- 
+2.43.0
